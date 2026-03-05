@@ -1,0 +1,47 @@
+# Prerequisites
+*.d
+
+# Python environments
+venv/
+env/
+.venv/
+.env/
+env.bak/
+venv.bak/
+
+# Compiled object files / Caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Data and Media (CRITICAL: Do not commit user data or temp media)
+data/input/*
+data/output/*
+data/temp/*
+temp_media/
+temp_reel_folder/
+*.csv
+*.mp4
+*.m4a
+*.mp3
+
+# Keep the directory structure for data folders, but ignore the files inside
+!data/input/.gitkeep
+!data/output/.gitkeep
+!data/temp/.gitkeep
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
