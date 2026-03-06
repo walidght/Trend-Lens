@@ -11,3 +11,5 @@ class AppConfig:
     whisper_model: str = "base"
     hook_sentence_count: int = 10
     db_path: str = "data/trendlens.db"
+    google_sheet_csv_url: str = "https://docs.google.com/spreadsheets/d/e/xyz/pub?gid=0&single=true&output=csv"
+    scrape_interval_days: int = 7

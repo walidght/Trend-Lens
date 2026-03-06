@@ -1,6 +1,13 @@
 import streamlit as st
 import pandas as pd
 import time
+from config import AppConfig
+from core import DatabaseManager
+from core import SheetIngestor
+
+config = AppConfig()
+db = DatabaseManager(config.db_path)
+sheet_ingestor = SheetIngestor(config, db)
 
 st.set_page_config(page_title="TrendLens Pipeline",
                    page_icon="🎣", layout="centered")
@@ -27,26 +34,31 @@ with tab1:
     st.write("Fetch creators from Google Sheets who haven't been scraped recently.")
 
     if st.button("Fetch from Google Sheets", type="primary"):
-        with st.spinner("Fetching data from Google Sheets..."):
-            # TODO: Plug in the actual Google Sheets fetching logic here later
-            time.sleep(1)  # Simulating network request
+        with st.spinner("Syncing Google Sheet to Database..."):
 
-            # Mock data for now
-            mock_urls = [
-                "https://www.instagram.com/zuck/",
-                "https://www.instagram.com/mosseri/"
-            ]
-            # Join them with a newline so Apify can read them easily
-            st.session_state['scrape_list'] = "\n".join(mock_urls)
-            st.success("Successfully fetched 2 profiles requiring updates!")
+            # 1. Pull new data from the published sheet into SQLite
+            new_additions = sheet_ingestor.sync_creators_to_db()
+            st.toast(
+                f"Synced Sheet! {new_additions} new profiles added.", icon="✅")
+
+            # 2. Ask the database who is due for a scrape
+            apify_urls = sheet_ingestor.generate_scrape_list(
+                platform='instagram')
+
+            # 3. Save to session state for the UI
+            st.session_state['scrape_list'] = "\n".join(apify_urls)
+
+            if apify_urls:
+                st.success(
+                    f"Found {len(apify_urls)} profiles requiring updates!")
+            else:
+                st.info("All profiles are up to date! No scraping needed.")
 
     if st.session_state['scrape_list']:
         st.write("### Paste these into Apify:")
         st.info(
             "Hover over the box below and click the 'Copy' icon in the top right. 📋")
-        # st.code natively includes a copy-to-clipboard button!
         st.code(st.session_state['scrape_list'], language="text")
-
         st.markdown(
             "[👉 Click here to open Apify Instagram Scraper](https://apify.com/apify/instagram-scraper)", unsafe_allow_html=True)
 
