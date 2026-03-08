@@ -115,7 +115,7 @@ with tab3:
 
     if st.button("Run AI Insights Engine", type="primary"):
         # Override the config temporarily for this run
-        insta_analyzer.config.z_score_threshold = z_score_threshold
+        config.z_score_threshold = z_score_threshold
 
         # Initialize the Analyzer and Pipeline with the DB connection
         insta_analyzer = InstagramAnalyzer(config, repo)
