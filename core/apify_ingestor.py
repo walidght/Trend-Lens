@@ -1,14 +1,13 @@
 import pandas as pd
 import logging
 from datetime import datetime
-from config import AppConfig
+from config.settings import AppConfig
 from core.repository import TrendLensRepository
 
 logger = logging.getLogger(__name__)
 
-
 class ApifyIngestor:
-    """Parses raw Apify CSV data and safely inserts it into the SQLite relational tables."""
+    """Parses raw Apify CSV data, cleans it, and passes it to the repository in bulk."""
 
     def __init__(self, config: AppConfig, repo: TrendLensRepository):
         self.config = config
@@ -17,11 +16,10 @@ class ApifyIngestor:
     def ingest_dataframe(self, df: pd.DataFrame) -> dict:
         """Processes the dataframe and returns a summary of rows inserted."""
 
-        # Standardize column names in case Apify changes them slightly
+        # Standardize column names
         if 'ownerUsername' not in df.columns and 'ownerFullName' in df.columns:
             df.rename(columns={'ownerFullName': 'ownerUsername'}, inplace=True)
 
-        # Fallbacks for missing columns
         for col in ['videoPlayCount', 'likesCount', 'commentsCount']:
             if col not in df.columns:
                 df[col] = 0
@@ -29,7 +27,6 @@ class ApifyIngestor:
         if 'audioUrl' not in df.columns:
             df['audioUrl'] = None
 
-        # Determine Collab flag
         if 'coauthorProducers/0/username' in df.columns:
             df['is_collab'] = df['coauthorProducers/0/username'].notna()
         elif 'taggedUsers/0/username' in df.columns:
@@ -37,39 +34,39 @@ class ApifyIngestor:
         else:
             df['is_collab'] = False
 
-        total_stats = {"new_videos": 0, "new_metrics": 0}
+        df = df.where(pd.notnull(df), None)
+
         today_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        records = []
 
         for _, row in df.iterrows():
-            username = str(row.get('ownerUsername', '')).strip()
-            url = str(row.get('url', ''))
+            username = str(row.get('ownerUsername', '')).strip() if row.get('ownerUsername') else ''
+            url = str(row.get('url', '')) if row.get('url') else ''
 
-            if not username or not url or pd.isna(url):
+            if not username or not url:
                 continue
 
-            # 1. Extract the unique Instagram Shortcode (e.g., C123XYZ)
             video_id = url.rstrip('/').split('/')[-1]
 
-            row_stats = self.repo.ingest_apify_row(
-                username=username,
-                video_id=video_id,
-                url=url,
-                audio_url=row.get('audioUrl'),
-                published_date=row.get('timestamp'),
-                views=int(row['videoPlayCount']) if pd.notna(
-                    row['videoPlayCount']) else 0,
-                likes=int(row['likesCount']) if pd.notna(
-                    row['likesCount']) else 0,
-                comments=int(row['commentsCount']) if pd.notna(
-                    row['commentsCount']) else 0,
-                is_collab=bool(row['is_collab']),
-                scraped_at=today_str
-            )
+            # Build the dictionary for this row
+            records.append({
+                "username": username,
+                "video_id": video_id,
+                "url": url,
+                "audio_url": row.get('audioUrl'),
+                "published_date": row.get('timestamp'),
+                "views": int(row['videoPlayCount']) if row.get('videoPlayCount') is not None else 0,
+                "likes": int(row['likesCount']) if row.get('likesCount') is not None else 0,
+                "comments": int(row['commentsCount']) if row.get('commentsCount') is not None else 0,
+                "is_collab": bool(row.get('is_collab')),
+                "scraped_at": today_str
+            })
 
-            # Aggregate stats for the Streamlit UI
-            total_stats["new_videos"] += row_stats["new_videos"]
-            total_stats["new_metrics"] += row_stats["new_metrics"]
+        if not records:
+            return {"new_videos": 0, "new_metrics": 0}
 
-        logger.info(
-            f"Ingestion complete. Added {total_stats['new_videos']} new videos and {total_stats['new_metrics']} metric snapshots.")
+        # Pass the entire list in one shot!
+        total_stats = self.repo.bulk_ingest_apify_data(records)
+
+        logger.info(f"Bulk ingestion complete. Touched {total_stats['new_videos']} videos and logged {total_stats['new_metrics']} new metrics.")
         return total_stats

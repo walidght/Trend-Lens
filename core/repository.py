@@ -61,55 +61,73 @@ class TrendLensRepository:
         with self.db.get_connection() as conn:
             return pd.read_sql_query(query, conn, params=(limit,))
         
-    def ingest_apify_row(self, username: str, video_id: str, url: str, audio_url: str, 
-                         published_date: str, views: int, likes: int, comments: int, 
-                         is_collab: bool, scraped_at: str) -> dict:
-        """Upserts creator and video, and inserts metrics and insight stubs."""
+    def bulk_ingest_apify_data(self, records: list[dict]) -> dict:
+        """Upserts batches of creators, videos, metrics, and insights securely and efficiently."""
         stats = {"new_videos": 0, "new_metrics": 0}
+        
+        if not records:
+            return stats
 
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
-
-            # 1. Upsert Creator
-            cursor.execute("""
-                INSERT INTO creators (username, platform, last_scraped_at)
-                VALUES (?, 'instagram', ?)
-                ON CONFLICT(username, platform) DO UPDATE SET last_scraped_at = ?
-            """, (username, scraped_at, scraped_at))
             
-            # Get creator ID
-            cursor.execute("SELECT id FROM creators WHERE username = ? AND platform = 'instagram'", (username,))
-            creator_id = cursor.fetchone()['id']
-
-            # 2. Upsert Video
-            cursor.execute("""
+            # 1. Batch Upsert Creators
+            # Extract unique creators from the batch to avoid duplicate attempts
+            creators = {(r['username'], 'instagram', r['scraped_at']) for r in records}
+            cursor.executemany("""
+                INSERT INTO creators (username, platform, last_scraped_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(username, platform) DO UPDATE SET last_scraped_at = excluded.last_scraped_at
+            """, list(creators))
+            
+            # Fetch the generated creator IDs to map them to the videos
+            usernames = list({r['username'] for r in records})
+            placeholders = ','.join(['?'] * len(usernames))
+            cursor.execute(f"""
+                SELECT id, username FROM creators 
+                WHERE username IN ({placeholders}) AND platform = 'instagram'
+            """, usernames)
+            
+            # Create a dictionary mapping like {'zuck': 1, 'mosseri': 2}
+            creator_map = {row['username']: row['id'] for row in cursor.fetchall()}
+            
+            # 2. Prepare the data batches for the remaining tables
+            videos_batch = []
+            metrics_batch = []
+            insights_batch = []
+            
+            for r in records:
+                cid = creator_map.get(r['username'])
+                if not cid:
+                    continue  # Safety check
+                
+                videos_batch.append((r['video_id'], cid, r['url'], r['audio_url'], r['published_date']))
+                metrics_batch.append((r['video_id'], r['scraped_at'], r['views'], r['likes'], r['comments']))
+                insights_batch.append((r['video_id'], r['is_collab']))
+                
+            # 3. Batch Upsert Videos
+            cursor.executemany("""
                 INSERT INTO videos (video_id, creator_id, url, audio_url, published_date)
                 VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(video_id) DO UPDATE SET audio_url = excluded.audio_url
-            """, (video_id, creator_id, url, audio_url, published_date))
+            """, videos_batch)
+            stats["new_videos"] = cursor.rowcount
             
-            # SQLite rowcount returns > 0 if a new row was added OR an existing row was updated.
-            # For our MVP tracking, we'll count it as a new video interaction.
-            if cursor.rowcount > 0:  
-                stats["new_videos"] += 1
-
-            # 3. Insert Metrics (Protected by UNIQUE constraint)
-            cursor.execute("""
+            # 4. Batch Insert Metrics (Protected by UNIQUE index)
+            cursor.executemany("""
                 INSERT OR IGNORE INTO video_metrics (video_id, scraped_at, views, likes, comments)
                 VALUES (?, ?, ?, ?, ?)
-            """, (video_id, scraped_at, views, likes, comments))
+            """, metrics_batch)
+            stats["new_metrics"] = cursor.rowcount
             
-            if cursor.rowcount > 0:
-                stats["new_metrics"] += 1
-
-            # 4. Insert Insights Stub
-            cursor.execute("""
+            # 5. Batch Insert Insights Stubs
+            cursor.executemany("""
                 INSERT OR IGNORE INTO video_insights (video_id, is_collab)
                 VALUES (?, ?)
-            """, (video_id, is_collab))
-
+            """, insights_batch)
+            
             conn.commit()
-
+            
         return stats
     
     def bulk_insert_creators(self, creators_list: list) -> int:
