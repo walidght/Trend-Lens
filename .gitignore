@@ -25,6 +25,7 @@ temp_reel_folder/
 *.mp4
 *.m4a
 *.mp3
+*.db
 
 # Keep the directory structure for data folders, but ignore the files inside
 !data/input/.gitkeep
