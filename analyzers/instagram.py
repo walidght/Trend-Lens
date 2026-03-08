@@ -16,15 +16,45 @@ class InstagramAnalyzer:
     def process_data(self) -> pd.DataFrame:
         logger.info("Loading latest video metrics from SQLite database...")
 
-        df = self.repo.get_videos_missing_hooks()
+        df = self.repo.get_all_latest_metrics()
+
 
         if df.empty:
-            logger.info("No new videos require analysis.")
+            logger.info("No videos found in database.")
             return df
 
-        df = self._calculate_insights(df)
+        # Convert the Apify string timestamp into a real Datetime object
+        # errors='coerce' turns bad data into NaT (Not a Time) so it doesn't crash
+        df['published_date'] = pd.to_datetime(
+            df['published_date'], utc=True, errors='coerce')
 
-        return self._filter_outliers(df)
+        # Calculate the cutoff date (e.g., 30 days ago)
+        cutoff_date = pd.Timestamp.utcnow() - pd.Timedelta(days=self.config.baseline_days)
+
+        # Filter the dataframe to only include recent videos
+        recent_df = df[df['published_date'] >= cutoff_date].copy()
+
+        if recent_df.empty:
+            logger.info(
+                f"No videos found in the last {self.config.baseline_days} days.")
+            return recent_df
+
+        logger.info(
+            f"Calculating baseline using {len(recent_df)} videos from the last {self.config.baseline_days} days.")
+
+        recent_df = self._calculate_insights(recent_df)
+
+        outliers_df = self._filter_outliers(recent_df)
+
+        # Filter out the ones we ALREADY transcribed!
+        pending_outliers = outliers_df[outliers_df['hook_text'].isnull()].copy(
+        )
+
+        logger.info(f"Found {len(outliers_df)} total recent outliers.")
+        logger.info(
+            f"{len(pending_outliers)} of those are NEW and need AI transcription.")
+
+        return pending_outliers
 
     def _calculate_insights(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculates Z-Scores based on the fetched SQLite data."""
