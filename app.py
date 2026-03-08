@@ -98,7 +98,7 @@ with tab2:
 
                 st.success(f"✅ Data successfully saved to the database!")
                 st.info(
-                    f"📊 Added {stats['new_videos']} new videos to the catalog.")
+                    f"📊 Added or updated {stats['new_videos']} new videos to the catalog.")
                 st.info(
                     f"📈 Logged {stats['new_metrics']} new daily metric snapshots.")
 
