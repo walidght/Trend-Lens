@@ -7,6 +7,7 @@ class AppConfig:
     input_csv: str = "data/input/apify_data.csv"
     output_csv: str = "data/output/viral_hooks.csv"
     z_score_threshold: float = 1.5
+    baseline_days: int = 30
     temp_dir: str = "data/temp"
     whisper_model: str = "base"
     hook_sentence_count: int = 10
