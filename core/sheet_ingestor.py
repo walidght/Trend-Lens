@@ -55,14 +55,12 @@ class SheetIngestor:
         usernames = self.repo.get_creators_due_for_scrape(platform, cutoff_str)
 
         # Format the usernames into full URLs for the Apify Actor
-        urls = []
-        for username in usernames:
-            if platform == 'instagram':
-                urls.append(f"https://www.instagram.com/{username}/")
-            elif platform == 'tiktok':
-                urls.append(f"https://www.tiktok.com/@{username}")
-            elif platform == 'youtube':
-                urls.append(f"https://www.youtube.com/{username}")
+        if platform == 'instagram':
+            urls = [f"https://www.instagram.com/{user}/" for user in usernames]
+        elif platform == 'tiktok':
+            urls = [f"https://www.tiktok.com/@{user}" for user in usernames]
+        elif platform == 'youtube':
+            urls = [f"https://www.youtube.com/{user}" for user in usernames] 
 
         logger.info(
             f"Generated scrape list: {len(urls)} {platform} profiles are due for updates.")
