@@ -1,13 +1,29 @@
 import streamlit as st
 import pandas as pd
 import time
+from analyzers import InstagramAnalyzer
 from config import AppConfig
 from core import DatabaseManager
 from core import SheetIngestor
+from core import ApifyIngestor
+from core import PipelineOrchestrator
+from core import TrendLensRepository
 
 config = AppConfig()
 db = DatabaseManager(config.db_path)
-sheet_ingestor = SheetIngestor(config, db)
+repo = TrendLensRepository(db)
+sheet_ingestor = SheetIngestor(config, repo)
+insta_analyzer = InstagramAnalyzer(config, repo)
+apify_ingestor = ApifyIngestor(config, repo)
+
+# Caching the AI model so it doesn't reload on every button click!
+
+
+@st.cache_resource
+def get_transcriber():
+    from core import TranscriptionService
+    return TranscriptionService(config.whisper_model)
+
 
 st.set_page_config(page_title="TrendLens Pipeline",
                    page_icon="🎣", layout="centered")
@@ -78,9 +94,13 @@ with tab2:
 
         if st.button("Save to SQLite Database", type="primary"):
             with st.spinner("Ingesting data, removing duplicates, and updating metrics..."):
-                # TODO: Plug in the SQLite insertion logic here
-                time.sleep(2)  # Simulating database writing
-                st.success("✅ Data successfully saved to the database!")
+                stats = apify_ingestor.ingest_dataframe(df)
+
+                st.success(f"✅ Data successfully saved to the database!")
+                st.info(
+                    f"📊 Added {stats['new_videos']} new videos to the catalog.")
+                st.info(
+                    f"📈 Logged {stats['new_metrics']} new daily metric snapshots.")
 
 
 # TAB 3: AI INSIGHTS & HOOK EXTRACTION
@@ -94,24 +114,42 @@ with tab3:
                                   min_value=1.0, max_value=3.0, value=1.5, step=0.1)
 
     if st.button("Run AI Insights Engine", type="primary"):
-        with st.status("Running AI Engine...", expanded=True) as status:
-            st.write("🔍 Identifying outliers based on Z-Score...")
-            time.sleep(1)  # Mock delay
+        # Override the config temporarily for this run
+        insta_analyzer.config.z_score_threshold = z_score_threshold
 
-            st.write("🎧 Downloading audio tracks from CDN...")
-            time.sleep(1)  # Mock delay
+        # Initialize the Analyzer and Pipeline with the DB connection
+        insta_analyzer = InstagramAnalyzer(config, repo)
+        transcriber = get_transcriber()
+        pipeline = PipelineOrchestrator(
+            config, repo, insta_analyzer, transcriber)
 
-            st.write("🤖 Transcribing with Whisper...")
-            time.sleep(2)  # Mock delay
+        # Setup UI Progress elements
+        progress_bar = st.progress(0)
+        status_text = st.empty()
 
-            status.update(label="AI Extraction Complete!",
-                          state="complete", expanded=False)
+        def update_ui(current, total, current_video_id):
+            """Callback function to update Streamlit from inside the pipeline loop."""
+            # Prevent division by zero if total is somehow 0
+            if total > 0:
+                percent_complete = int((current / total) * 100)
+                progress_bar.progress(percent_complete)
+            status_text.text(
+                f"Processed {current} of {total} viral videos... (Latest: {current_video_id})")
 
-        # Mock Results Table
-        st.success("Extracted 2 new hooks!")
-        mock_results = pd.DataFrame({
-            "Creator": ["zuck", "mosseri"],
-            "Z-Score": [2.1, 1.8],
-            "Hook": ["This is the future of mixed reality.", "We are making some changes to the algorithm."]
-        })
-        st.dataframe(mock_results, use_container_width=True)
+        with st.spinner("Analyzing metrics and powering up AI..."):
+            # Run the extraction using your updated PipelineOrchestrator!
+            total_extracted = pipeline.run(progress_callback=update_ui)
+
+        if total_extracted > 0:
+            st.success(
+                f"🎉 Successfully extracted {total_extracted} new viral hooks!")
+            st.balloons()
+
+            # Show a preview of the newest hooks directly from SQLite
+            preview_df = repo.get_latest_hooks_preview(limit=10)
+
+            st.write("### Latest Extracted Hooks:")
+            st.dataframe(preview_df, use_container_width=True)
+
+        else:
+            st.info("No new viral videos found above the current Z-score threshold. Try lowering the threshold or importing new Apify data.")

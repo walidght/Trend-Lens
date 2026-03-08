@@ -47,6 +47,7 @@ class DatabaseManager:
                     creator_id INTEGER NOT NULL,
                     url TEXT NOT NULL,
                     published_date DATETIME,
+                    audio_url TEXT,
                     FOREIGN KEY(creator_id) REFERENCES creators(id) ON DELETE CASCADE
                 )
             """)

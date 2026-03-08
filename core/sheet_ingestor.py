@@ -2,7 +2,7 @@ import pandas as pd
 import logging
 from datetime import datetime, timedelta
 from config.settings import AppConfig
-from core.database import DatabaseManager
+from core.repository import TrendLensRepository
 
 logger = logging.getLogger(__name__)
 
@@ -10,9 +10,9 @@ logger = logging.getLogger(__name__)
 class SheetIngestor:
     """Handles fetching target profiles from Google Sheets and managing the scrape queue."""
 
-    def __init__(self, config: AppConfig, db: DatabaseManager):
+    def __init__(self, config: AppConfig, repo: TrendLensRepository):
         self.config = config
-        self.db = db
+        self.repo = repo
 
     def sync_creators_to_db(self) -> int:
         """Fetches the published Google Sheet CSV and inserts new creators into SQLite."""
@@ -33,23 +33,10 @@ class SheetIngestor:
             df['platform'] = df['platform'].astype(str).str.strip().str.lower()
             df = df.dropna(subset=['username', 'platform'])
 
-            added_count = 0
+            creators_data = list(zip(df['username'], df['platform']))
 
             # Insert into database
-            with self.db.get_connection() as conn:
-                cursor = conn.cursor()
-                for _, row in df.iterrows():
-                    # ON CONFLICT DO NOTHING ensures we never get duplicate errors
-                    # because of the UNIQUE(username, platform) constraint in our DB
-                    cursor.execute("""
-                        INSERT INTO creators (username, platform)
-                        VALUES (?, ?)
-                        ON CONFLICT(username, platform) DO NOTHING
-                    """, (row['username'], row['platform']))
-
-                    if cursor.rowcount > 0:
-                        added_count += 1
-                conn.commit()
+            added_count = self.repo.bulk_insert_creators(creators_data)
 
             logger.info(
                 f"Synced {len(df)} creators from Sheet. {added_count} new profiles added to DB.")
@@ -65,26 +52,17 @@ class SheetIngestor:
         cutoff_date = datetime.now() - timedelta(days=self.config.scrape_interval_days)
         cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
 
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
-            # Select profiles where they've NEVER been scraped, OR they were scraped a long time ago
-            cursor.execute("""
-                SELECT username FROM creators 
-                WHERE platform = ? 
-                AND (last_scraped_at IS NULL OR last_scraped_at < ?)
-            """, (platform, cutoff_str))
-
-            rows = cursor.fetchall()
+        usernames = self.repo.get_creators_due_for_scrape(platform, cutoff_str)
 
         # Format the usernames into full URLs for the Apify Actor
         urls = []
-        for row in rows:
+        for username in usernames:
             if platform == 'instagram':
-                urls.append(f"https://www.instagram.com/{row['username']}/")
+                urls.append(f"https://www.instagram.com/{username}/")
             elif platform == 'tiktok':
-                urls.append(f"https://www.tiktok.com/@{row['username']}")
+                urls.append(f"https://www.tiktok.com/@{username}")
             elif platform == 'youtube':
-                urls.append(f"https://www.youtube.com/{row['username']}")
+                urls.append(f"https://www.youtube.com/{username}")
 
         logger.info(
             f"Generated scrape list: {len(urls)} {platform} profiles are due for updates.")
