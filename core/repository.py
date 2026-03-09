@@ -1,3 +1,4 @@
+import sqlite3
 import pandas as pd
 import logging
 from core.database import DatabaseManager
@@ -151,15 +152,98 @@ class TrendLensRepository:
             conn.commit()
         return added_count
 
-    def get_creators_due_for_scrape(self, platform: str, cutoff_str: str) -> list:
-        """Returns a list of usernames that haven't been scraped since the cutoff date."""
+    def get_creators_due_for_scrape(self, platform: str, cutoff_str: str, sheet_id: int = None) -> list:
+        """Returns a list of usernames due for a scrape, optionally filtered by a specific sheet."""
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT username FROM creators 
-                WHERE platform = ? 
-                AND (last_scraped_at IS NULL OR last_scraped_at < ?)
-            """, (platform, cutoff_str))
 
-            # Extract just the usernames into a simple Python list
+            query = "SELECT c.username FROM creators c "
+            params = []
+
+            # If we are filtering by a specific sheet, JOIN the junction table!
+            if sheet_id:
+                query += "JOIN sheet_creators sc ON c.id = sc.creator_id WHERE sc.sheet_id = ? AND "
+                params.append(sheet_id)
+            else:
+                query += "WHERE "
+
+            query += "c.platform = ? AND (c.last_scraped_at IS NULL OR c.last_scraped_at < ?)"
+            params.extend([platform, cutoff_str])
+
+            cursor.execute(query, params)
             return [row['username'] for row in cursor.fetchall()]
+
+    def add_sheet(self, name: str, url: str) -> bool:
+        """Adds a new Google Sheet to the database."""
+        try:
+            with self.db.get_connection() as conn:
+                conn.execute(
+                    "INSERT INTO sheets (name, url) VALUES (?, ?)", (name, url))
+                conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            logger.warning(f"Sheet with name '{name}' already exists.")
+            return False
+
+    def get_all_sheets(self) -> dict:
+        """Returns a dictionary of {sheet_name: {"id": id, "url": url}} for the UI."""
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, name, url FROM sheets")
+            return {row['name']: {"id": row['id'], "url": row['url']} for row in cursor.fetchall()}
+
+    def link_creators_to_sheet(self, sheet_id: int, usernames: list[str], platform: str = 'instagram'):
+        """Links a list of existing creators to a specific sheet."""
+        if not usernames:
+            return
+
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # 1. Fetch the creator IDs for the given usernames
+            placeholders = ','.join(['?'] * len(usernames))
+            query = f"SELECT id FROM creators WHERE username IN ({placeholders}) AND platform = ?"
+            cursor.execute(query, usernames + [platform])
+            creator_ids = [row['id'] for row in cursor.fetchall()]
+
+            # 2. Insert into the junction table
+            links = [(sheet_id, c_id) for c_id in creator_ids]
+            cursor.executemany("""
+                INSERT OR IGNORE INTO sheet_creators (sheet_id, creator_id)
+                VALUES (?, ?)
+            """, links)
+
+            conn.commit()
+
+    def get_all_latest_metrics(self, sheet_id: int = None) -> pd.DataFrame:
+        """Fetches the latest metrics, optionally filtered by a specific sheet."""
+        query = """
+            SELECT 
+                v.video_id, v.url, v.audio_url, v.published_date,
+                c.username as ownerUsername,
+                m.views as videoPlayCount, m.likes as likesCount, m.comments as commentsCount,
+                vi.is_collab,
+                vi.hook_text
+            FROM videos v
+            JOIN creators c ON v.creator_id = c.id
+        """
+        params = []
+
+        # Filter the math by the specific sheet if requested
+        if sheet_id:
+            query += " JOIN sheet_creators sc ON c.id = sc.creator_id AND sc.sheet_id = ? "
+            params.append(sheet_id)
+
+        query += """
+            JOIN (
+                SELECT video_id, views, likes, comments
+                FROM video_metrics 
+                WHERE (video_id, scraped_at) IN (
+                    SELECT video_id, MAX(scraped_at) 
+                    FROM video_metrics GROUP BY video_id
+                )
+            ) m ON v.video_id = m.video_id
+            LEFT JOIN video_insights vi ON v.video_id = vi.video_id
+        """
+        with self.db.get_connection() as conn:
+            return pd.read_sql_query(query, conn, params=params)

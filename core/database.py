@@ -29,7 +29,6 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            # 1. CREATORS TABLE
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS creators (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +39,26 @@ class DatabaseManager:
                 )
             """)
 
-            # 2. VIDEOS TABLE (Static Data)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sheets (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    url TEXT NOT NULL
+                )
+            """)
+
+            # JUNCTION TABLE (Many-to-Many)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS sheet_creators (
+                    sheet_id INTEGER NOT NULL,
+                    creator_id INTEGER NOT NULL,
+                    FOREIGN KEY(sheet_id) REFERENCES sheets(id) ON DELETE CASCADE,
+                    FOREIGN KEY(creator_id) REFERENCES creators(id) ON DELETE CASCADE,
+                    UNIQUE(sheet_id, creator_id)
+                )
+            """)
+
+            # VIDEOS TABLE (Static Data)
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS videos (
                     video_id TEXT PRIMARY KEY,

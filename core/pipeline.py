@@ -22,9 +22,9 @@ class PipelineOrchestrator:
         self.analyzer = analyzer
         self.downloader = MediaDownloader()
 
-    def run(self, progress_callback=None) -> int:
+    def run(self, sheet_id: int = None, progress_callback=None) -> int:
         logger.info("Starting pipeline execution.")
-        outliers_df = self.analyzer.process_data()
+        outliers_df = self.analyzer.process_data(sheet_id)
 
         if outliers_df.empty:
             logger.info("No new outliers to process.")
@@ -54,7 +54,8 @@ class PipelineOrchestrator:
 
                 logger.info("Hook extracted successfully.")
 
-                self.repo.save_extracted_hook(video_id, hook, float(row['view_z_score']))
+                self.repo.save_extracted_hook(
+                    video_id, hook, float(row['view_z_score']))
                 processed_count += 1
 
                 # Cleanup

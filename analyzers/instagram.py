@@ -13,10 +13,10 @@ class InstagramAnalyzer:
         self.config = config
         self.repo = repo
 
-    def process_data(self) -> pd.DataFrame:
+    def process_data(self, sheet_id: int = None) -> pd.DataFrame:
         logger.info("Loading latest video metrics from SQLite database...")
 
-        df = self.repo.get_all_latest_metrics()
+        df = self.repo.get_all_latest_metrics(sheet_id)
 
 
         if df.empty:

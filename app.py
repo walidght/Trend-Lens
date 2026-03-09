@@ -46,37 +46,61 @@ tab1, tab2, tab3 = st.tabs([
 
 # TAB 1: FETCH FROM SHEETS
 with tab1:
-    st.header("1. Get Creators to Scrape")
-    st.write("Fetch creators from Google Sheets who haven't been scraped recently.")
+    st.header("1. Manage & Fetch Sheets")
 
-    if st.button("Fetch from Google Sheets", type="primary"):
-        with st.spinner("Syncing Google Sheet to Database..."):
+    with st.expander("➕ Add a New Client/Niche Sheet"):
+        new_sheet_name = st.text_input("Sheet Name (e.g., Tech Founders)")
+        new_sheet_url = st.text_input("Published CSV URL")
+        if st.button("Save Sheet"):
+            if new_sheet_name and new_sheet_url:
+                if repo.add_sheet(new_sheet_name, new_sheet_url):
+                    st.success("Sheet saved! Refreshing...")
+                    st.rerun()
+                else:
+                    st.error("A sheet with that name already exists.")
 
-            # 1. Pull new data from the published sheet into SQLite
-            new_additions = sheet_ingestor.sync_creators_to_db()
+    st.divider()
+
+    all_sheets = repo.get_all_sheets()
+
+    sheet_names = list(all_sheets.keys())
+    selected_sheet_name = st.selectbox(
+        "Select Active Sheet to Process", sheet_names)
+
+    if not all_sheets:
+        st.warning("👈 Please add a Google Sheet above to get started.")
+        st.stop()
+
+    # Store the selection globally so Tab 3 knows what we are looking at!
+    active_sheet = all_sheets[selected_sheet_name]
+    st.session_state['active_sheet_id'] = active_sheet["id"]
+    st.session_state['active_sheet_name'] = selected_sheet_name
+
+    if st.button(f"Fetch & Generate Apify Links for '{selected_sheet_name}'", type="primary"):
+        with st.spinner("Syncing creators and linking them to this sheet..."):
+
+            # Pass the ID and URL dynamically!
+            new_additions = sheet_ingestor.sync_creators_to_db(
+                active_sheet["id"], active_sheet["url"])
             st.toast(
-                f"Synced Sheet! {new_additions} new profiles added.", icon="✅")
+                f"Synced! {new_additions} brand new profiles added to the database.", icon="✅")
 
-            # 2. Ask the database who is due for a scrape
+            # Ask the database who is due for a scrape for THIS specific sheet
             apify_urls = sheet_ingestor.generate_scrape_list(
-                platform='instagram')
+                platform='instagram', sheet_id=active_sheet["id"])
 
-            # 3. Save to session state for the UI
             st.session_state['scrape_list'] = "\n".join(apify_urls)
 
             if apify_urls:
                 st.success(
                     f"Found {len(apify_urls)} profiles requiring updates!")
             else:
-                st.info("All profiles are up to date! No scraping needed.")
+                st.info(
+                    "All profiles in this sheet are up to date! No scraping needed.")
 
-    if st.session_state['scrape_list']:
+    if st.session_state.get('scrape_list'):
         st.write("### Paste these into Apify:")
-        st.info(
-            "Hover over the box below and click the 'Copy' icon in the top right. 📋")
         st.code(st.session_state['scrape_list'], language="text")
-        st.markdown(
-            "[👉 Click here to open Apify Instagram Scraper](https://apify.com/apify/instagram-scraper)", unsafe_allow_html=True)
 
 # TAB 2: INGEST APIFY DATA
 with tab2:
@@ -109,6 +133,14 @@ with tab3:
     st.write(
         "Find outliers in the database and run Whisper AI to extract audio hooks.")
 
+    # Make sure we actually have a sheet selected
+    if 'active_sheet_id' not in st.session_state:
+        st.warning("Please go to Tab 1 and select an active sheet first.")
+        st.stop()
+
+    st.info(
+        f"📊 Currently analyzing isolated data for: **{st.session_state['active_sheet_name']}**")
+
     # Let the user tweak the threshold before running (not sure about keeping this)
     z_score_threshold = st.slider("Z-Score Threshold (Higher = more strictly viral)",
                                   min_value=1.0, max_value=3.0, value=1.5, step=0.1)
@@ -138,7 +170,8 @@ with tab3:
 
         with st.spinner("Analyzing metrics and powering up AI..."):
             # Run the extraction using your updated PipelineOrchestrator!
-            total_extracted = pipeline.run(progress_callback=update_ui)
+            total_extracted = pipeline.run(
+                sheet_id=st.session_state['active_sheet_id'], progress_callback=update_ui)
 
         if total_extracted > 0:
             st.success(

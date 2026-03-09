@@ -14,14 +14,14 @@ class SheetIngestor:
         self.config = config
         self.repo = repo
 
-    def sync_creators_to_db(self) -> int:
+    def sync_creators_to_db(self, sheet_id: int, sheet_url: str) -> int:
         """Fetches the published Google Sheet CSV and inserts new creators into SQLite."""
         logger.info(
-            f"Fetching Google Sheet from: {self.config.google_sheet_csv_url}")
+            f"Fetching Google Sheet from: {sheet_url}")
 
         try:
             # Pandas can read a web URL like a local file
-            df = pd.read_csv(self.config.google_sheet_csv_url)
+            df = pd.read_csv(sheet_url)
 
             # Ensure the sheet has the required columns
             if 'username' not in df.columns or 'platform' not in df.columns:
@@ -38,6 +38,10 @@ class SheetIngestor:
             # Insert into database
             added_count = self.repo.bulk_insert_creators(creators_data)
 
+            for platform in df['platform'].unique():
+                platform_usernames = df[df['platform'] == platform]['username'].tolist()
+                self.repo.link_creators_to_sheet(sheet_id, platform_usernames, platform)
+
             logger.info(
                 f"Synced {len(df)} creators from Sheet. {added_count} new profiles added to DB.")
             return added_count
@@ -46,13 +50,13 @@ class SheetIngestor:
             logger.error(f"Failed to sync Google Sheet: {e}")
             return 0
 
-    def generate_scrape_list(self, platform: str = 'instagram') -> list:
+    def generate_scrape_list(self, platform: str = 'instagram', sheet_id: int = None) -> list:
         """Finds creators who haven't been scraped recently and formats them for Apify."""
         # Calculate the cutoff date (e.g., 7 days ago)
         cutoff_date = datetime.now() - timedelta(days=self.config.scrape_interval_days)
         cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
 
-        usernames = self.repo.get_creators_due_for_scrape(platform, cutoff_str)
+        usernames = self.repo.get_creators_due_for_scrape(platform, cutoff_str, sheet_id)
 
         # Format the usernames into full URLs for the Apify Actor
         if platform == 'instagram':
