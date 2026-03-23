@@ -6,8 +6,8 @@ from core import TrendLensRepository
 logger = logging.getLogger(__name__)
 
 
-class InstagramAnalyzer:
-    """Pulls data from SQLite, calculates insights, and identifies viral outliers."""
+class TrendAnalyzer:
+    """A universal AI pipeline that detects mathematical outliers across any platform."""
 
     def __init__(self, config: AppConfig, repo: TrendLensRepository):
         self.config = config

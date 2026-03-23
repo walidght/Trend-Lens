@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
-from analyzers.instagram import InstagramAnalyzer
+from analyzers.trend_analyzer import TrendAnalyzer
+from config.mappings import get_available_platforms
 from core.sheet_ingestor import SheetIngestor
-from core.apify_ingestor import ApifyIngestor
+from core.ingestors import DataIngestor
 from core.pipeline import PipelineOrchestrator
 import plotly.express as px
 
@@ -12,8 +13,8 @@ config = st.session_state.config
 
 # Initialize the business logic classes
 sheet_ingestor = SheetIngestor(config, repo)
-insta_analyzer = InstagramAnalyzer(config, repo)
-apify_ingestor = ApifyIngestor(config, repo)
+trend_analyzer = TrendAnalyzer(config, repo)
+apify_ingestor = DataIngestor(config, repo)
 
 
 @st.cache_resource
@@ -109,24 +110,25 @@ with tab2:
     st.write(
         "Drag and drop the CSV downloaded from Apify to ingest it into the SQLite database.")
 
+    # Dynamically populate the dropdown from  registry
+    platform_choice = st.selectbox("Data Source", get_available_platforms())
     uploaded_file = st.file_uploader("Upload Apify CSV", type=["csv"])
 
-    if uploaded_file is not None:
+    if uploaded_file is not None and st.button("Normalize & Save to Database"):
         # Show a preview of the uploaded csv
         df = pd.read_csv(uploaded_file)
         st.write(f"Preview: Found {len(df)} rows.")
         st.dataframe(df.head(3))
 
-        if st.button("Save to SQLite Database", type="primary"):
-            with st.spinner("Ingesting data, removing duplicates, and updating metrics..."):
-                stats = apify_ingestor.ingest_dataframe(df)
-
-                st.success(f"✅ Data successfully saved to the database!")
-                # TODO: Check the displayed messages
-                st.info(
-                    f"📊 Added or updated {stats['new_videos']} new videos to the catalog.")
-                st.info(
-                    f"📈 Logged {stats['new_metrics']} new daily metric snapshots.")
+        with st.spinner(f"Ingesting {platform_choice} data..."):
+            unified_ingestor = DataIngestor(config, repo)
+            
+            # 2. Just pass the string name. The ingestor handles the rest!
+            stats = unified_ingestor.ingest_dataframe(df, platform_name=platform_choice)
+            
+            st.success("✅ Data normalized and ingested successfully!")
+            st.metric("New Videos Tracked", stats["new_videos"])
+            st.metric("New Daily Metrics", stats["new_metrics"])
 
 
 # TAB 3: AI INSIGHTS & HOOK EXTRACTION
@@ -152,10 +154,10 @@ with tab3:
         config.z_score_threshold = z_score_threshold
 
         # Initialize the Analyzer and Pipeline with the DB connection
-        insta_analyzer = InstagramAnalyzer(config, repo)
+        trend_analyzer = TrendAnalyzer(config, repo)
         transcriber = get_transcriber()
         pipeline = PipelineOrchestrator(
-            config, repo, insta_analyzer, transcriber)
+            config, repo, trend_analyzer, transcriber)
 
         # Setup UI Progress elements
         progress_bar = st.progress(0)

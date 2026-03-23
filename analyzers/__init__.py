@@ -1,1 +1,1 @@
-from .instagram import InstagramAnalyzer
+from .trend_analyzer import InstagramAnalyzer
