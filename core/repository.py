@@ -247,3 +247,31 @@ class TrendLensRepository:
         """
         with self.db.get_connection() as conn:
             return pd.read_sql_query(query, conn, params=params)
+
+    def get_dashboard_data(self, sheet_id: int) -> pd.DataFrame:
+        """Fetches all recent video data for charting, including the extracted hooks."""
+        query = """
+            SELECT 
+                c.username, v.url, v.published_date,
+                m.views, vi.view_z_score, vi.hook_text
+            FROM videos v
+            JOIN creators c ON v.creator_id = c.id
+            JOIN sheet_creators sc ON c.id = sc.creator_id
+            JOIN (
+                SELECT video_id, views FROM video_metrics 
+                WHERE (video_id, scraped_at) IN (
+                    SELECT video_id, MAX(scraped_at) FROM video_metrics GROUP BY video_id
+                )
+            ) m ON v.video_id = m.video_id
+            LEFT JOIN video_insights vi ON v.video_id = vi.video_id
+            WHERE sc.sheet_id = ?
+        """
+        with self.db.get_connection() as conn:
+            df = pd.read_sql_query(query, conn, params=(sheet_id,))
+
+        # Clean up dates for plotting
+        if not df.empty:
+            df['published_date'] = pd.to_datetime(
+                df['published_date'], utc=True, errors='coerce')
+
+        return df

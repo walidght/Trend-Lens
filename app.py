@@ -1,188 +1,56 @@
 import streamlit as st
-import pandas as pd
-import time
-from analyzers import InstagramAnalyzer
-from config import AppConfig
-from core import DatabaseManager
-from core import SheetIngestor
-from core import ApifyIngestor
-from core import PipelineOrchestrator
-from core import TrendLensRepository
+from config.settings import AppConfig
+from core.database import DatabaseManager
+from core.repository import TrendLensRepository
 
-config = AppConfig()
-db = DatabaseManager(config.db_path)
-repo = TrendLensRepository(db)
-sheet_ingestor = SheetIngestor(config, repo)
-insta_analyzer = InstagramAnalyzer(config, repo)
-apify_ingestor = ApifyIngestor(config, repo)
+# Global page config
+st.set_page_config(page_title="TrendDelta.co Analytics",
+                   page_icon="🎣", layout="wide")
 
-# Caching the AI model so it doesn't reload on every button click!
+# We use session state so the database doesn't reconnect every time we change pages
+if 'repo' not in st.session_state:
+    config = AppConfig()
+    db = DatabaseManager(config.db_path)
+    st.session_state.repo = TrendLensRepository(db)
+    st.session_state.config = config
 
+repo = st.session_state.repo
 
-@st.cache_resource
-def get_transcriber():
-    from core import TranscriptionService
-    return TranscriptionService(config.whisper_model)
+# GLOBAL SIDEBAR (PERSISTS ACROSS ALL PAGES)
+with st.sidebar:
+    st.title("📈 TrendDelta.co")
+    st.markdown("---")
 
-
-st.set_page_config(page_title="TrendLens Pipeline",
-                   page_icon="🎣", layout="centered")
-
-st.title("🎣 TrendLens Pipeline")
-st.markdown(
-    "Manage your ETL pipeline: Fetch creators, ingest Apify data, and extract AI hooks.")
-
-# We use session state to remember data between button clicks (so the screen doesn't clear)
-if 'scrape_list' not in st.session_state:
-    st.session_state['scrape_list'] = ""
-
-# Workflow tabs
-tab1, tab2, tab3 = st.tabs([
-    "1️⃣ Fetch & Scrape",
-    "2️⃣ Ingest Data",
-    "3️⃣ Run AI Insights"
-])
-
-
-# TAB 1: FETCH FROM SHEETS
-with tab1:
-    st.header("1. Manage & Fetch Sheets")
-
-    with st.expander("➕ Add a New Client/Niche Sheet"):
-        new_sheet_name = st.text_input("Sheet Name (e.g., Tech Founders)")
-        new_sheet_url = st.text_input("Published CSV URL")
-        if st.button("Save Sheet"):
-            if new_sheet_name and new_sheet_url:
-                if repo.add_sheet(new_sheet_name, new_sheet_url):
-                    st.success("Sheet saved! Refreshing...")
-                    st.rerun()
-                else:
-                    st.error("A sheet with that name already exists.")
-
-    st.divider()
-
+    # Fetch sheets and create the global dropdown
     all_sheets = repo.get_all_sheets()
 
-    sheet_names = list(all_sheets.keys())
-    selected_sheet_name = st.selectbox(
-        "Select Active Sheet to Process", sheet_names)
-
     if not all_sheets:
-        st.warning("👈 Please add a Google Sheet above to get started.")
-        st.stop()
+        st.warning("No sheets found. Go to Pipeline to add one.")
+        st.session_state['active_sheet_id'] = None
+    else:
+        sheet_names = list(all_sheets.keys())
 
-    # Store the selection globally so Tab 3 knows what we are looking at!
-    active_sheet = all_sheets[selected_sheet_name]
-    st.session_state['active_sheet_id'] = active_sheet["id"]
-    st.session_state['active_sheet_name'] = selected_sheet_name
+        # Keep the dropdown selection persistent if they click around
+        current_index = 0
+        if 'active_sheet_name' in st.session_state and st.session_state['active_sheet_name'] in sheet_names:
+            current_index = sheet_names.index(
+                st.session_state['active_sheet_name'])
 
-    if st.button(f"Fetch & Generate Apify Links for '{selected_sheet_name}'", type="primary"):
-        with st.spinner("Syncing creators and linking them to this sheet..."):
+        selected_sheet_name = st.selectbox(
+            "🏢 Select Client / Niche", sheet_names, index=current_index)
 
-            # Pass the ID and URL dynamically!
-            new_additions = sheet_ingestor.sync_creators_to_db(
-                active_sheet["id"], active_sheet["url"])
-            st.toast(
-                f"Synced! {new_additions} brand new profiles added to the database.", icon="✅")
+        # Save to session state so all pages instantly know which client we are looking at!
+        st.session_state['active_sheet_id'] = all_sheets[selected_sheet_name]["id"]
+        st.session_state['active_sheet_name'] = selected_sheet_name
+        st.session_state['active_sheet_url'] = all_sheets[selected_sheet_name]["url"]
 
-            # Ask the database who is due for a scrape for THIS specific sheet
-            apify_urls = sheet_ingestor.generate_scrape_list(
-                platform='instagram', sheet_id=active_sheet["id"])
+# MULTIPAGE NAVIGATION 
+pipeline_page = st.Page("pages/1_pipeline.py",
+                        title="Data Pipeline", icon="⚙️")
+channel_page = st.Page("pages/2_channel.py",
+                       title="Channel Dashboard", icon="📊")
+video_page = st.Page("pages/3_video.py", title="Video Deep Dive", icon="🎬")
 
-            st.session_state['scrape_list'] = "\n".join(apify_urls)
-
-            if apify_urls:
-                st.success(
-                    f"Found {len(apify_urls)} profiles requiring updates!")
-            else:
-                st.info(
-                    "All profiles in this sheet are up to date! No scraping needed.")
-
-    if st.session_state.get('scrape_list'):
-        st.write("### Paste these into Apify:")
-        st.code(st.session_state['scrape_list'], language="text")
-
-# TAB 2: INGEST APIFY DATA
-with tab2:
-    st.header("2. Upload Apify Results")
-    st.write(
-        "Drag and drop the CSV downloaded from Apify to ingest it into the SQLite database.")
-
-    uploaded_file = st.file_uploader("Upload Apify CSV", type=["csv"])
-
-    if uploaded_file is not None:
-        # Show a preview of the uploaded csv
-        df = pd.read_csv(uploaded_file)
-        st.write(f"Preview: Found {len(df)} rows.")
-        st.dataframe(df.head(3))
-
-        if st.button("Save to SQLite Database", type="primary"):
-            with st.spinner("Ingesting data, removing duplicates, and updating metrics..."):
-                stats = apify_ingestor.ingest_dataframe(df)
-
-                st.success(f"✅ Data successfully saved to the database!")
-                st.info(
-                    f"📊 Added or updated {stats['new_videos']} new videos to the catalog.")
-                st.info(
-                    f"📈 Logged {stats['new_metrics']} new daily metric snapshots.")
-
-
-# TAB 3: AI INSIGHTS & HOOK EXTRACTION
-with tab3:
-    st.header("3. Extract Viral Hooks")
-    st.write(
-        "Find outliers in the database and run Whisper AI to extract audio hooks.")
-
-    # Make sure we actually have a sheet selected
-    if 'active_sheet_id' not in st.session_state:
-        st.warning("Please go to Tab 1 and select an active sheet first.")
-        st.stop()
-
-    st.info(
-        f"📊 Currently analyzing isolated data for: **{st.session_state['active_sheet_name']}**")
-
-    # Let the user tweak the threshold before running (not sure about keeping this)
-    z_score_threshold = st.slider("Z-Score Threshold (Higher = more strictly viral)",
-                                  min_value=1.0, max_value=3.0, value=1.5, step=0.1)
-
-    if st.button("Run AI Insights Engine", type="primary"):
-        # Override the config temporarily for this run
-        config.z_score_threshold = z_score_threshold
-
-        # Initialize the Analyzer and Pipeline with the DB connection
-        insta_analyzer = InstagramAnalyzer(config, repo)
-        transcriber = get_transcriber()
-        pipeline = PipelineOrchestrator(
-            config, repo, insta_analyzer, transcriber)
-
-        # Setup UI Progress elements
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        def update_ui(current, total, current_video_id):
-            """Callback function to update Streamlit from inside the pipeline loop."""
-            # Prevent division by zero if total is somehow 0
-            if total > 0:
-                percent_complete = int((current / total) * 100)
-                progress_bar.progress(percent_complete)
-            status_text.text(
-                f"Processed {current} of {total} viral videos... (Latest: {current_video_id})")
-
-        with st.spinner("Analyzing metrics and powering up AI..."):
-            # Run the extraction using your updated PipelineOrchestrator!
-            total_extracted = pipeline.run(
-                sheet_id=st.session_state['active_sheet_id'], progress_callback=update_ui)
-
-        if total_extracted > 0:
-            st.success(
-                f"🎉 Successfully extracted {total_extracted} new viral hooks!")
-            st.balloons()
-
-            # Show a preview of the newest hooks directly from SQLite
-            preview_df = repo.get_latest_hooks_preview(limit=10)
-
-            st.write("### Latest Extracted Hooks:")
-            st.dataframe(preview_df, use_container_width=True)
-
-        else:
-            st.info("No new viral videos found above the current Z-score threshold. Try lowering the threshold or importing new Apify data.")
+# Setup the router and run it
+pg = st.navigation([pipeline_page, channel_page, video_page])
+pg.run()
