@@ -2,3 +2,4 @@ pandas
 openai-whisper
 requests
 streamlit
+plotly
