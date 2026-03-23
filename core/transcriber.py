@@ -22,8 +22,11 @@ class TranscriptionService:
             if not full_text:
                 return "No speech detected."
 
-            sentences = re.split(r'(?<=[.!?]) +', full_text)
-            return ' '.join(sentences[:num_sentences]).strip()
+            if num_sentences > -1:
+                sentences = re.split(r'(?<=[.!?]) +', full_text)
+                return ' '.join(sentences[:num_sentences]).strip()
+            else:
+                return full_text
 
         except FileNotFoundError:
             logger.error("FFmpeg not found in system PATH.")
