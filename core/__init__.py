@@ -3,5 +3,5 @@ from .pipeline import PipelineOrchestrator
 from .transcriber import TranscriptionService
 from .database import DatabaseManager
 from .sheet_ingestor import SheetIngestor
-from .ingestors import ApifyIngestor
+from .ingestors import DataIngestor
 from .repository import TrendLensRepository

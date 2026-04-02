@@ -1,6 +1,8 @@
 import pandas as pd
 import logging
 from datetime import datetime, timedelta
+import requests
+import io
 from config.settings import AppConfig
 from core.repository import TrendLensRepository
 
@@ -20,8 +22,14 @@ class SheetIngestor:
             f"Fetching Google Sheet from: {sheet_url}")
 
         try:
-            # Pandas can read a web URL like a local file
-            df = pd.read_csv(sheet_url)
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            response = requests.get(sheet_url, headers=headers, timeout=15)
+
+            response.raise_for_status()
+
+            csv_data = io.StringIO(response.text)
+            df = pd.read_csv(csv_data)
+
 
             # Ensure the sheet has the required columns
             if 'username' not in df.columns or 'platform' not in df.columns:
@@ -39,8 +47,10 @@ class SheetIngestor:
             added_count = self.repo.bulk_insert_creators(creators_data)
 
             for platform in df['platform'].unique():
-                platform_usernames = df[df['platform'] == platform]['username'].tolist()
-                self.repo.link_creators_to_sheet(sheet_id, platform_usernames, platform)
+                platform_usernames = df[df['platform']
+                                        == platform]['username'].tolist()
+                self.repo.link_creators_to_sheet(
+                    sheet_id, platform_usernames, platform)
 
             logger.info(
                 f"Synced {len(df)} creators from Sheet. {added_count} new profiles added to DB.")
@@ -56,7 +66,8 @@ class SheetIngestor:
         cutoff_date = datetime.now() - timedelta(days=self.config.scrape_interval_days)
         cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
 
-        usernames = self.repo.get_creators_due_for_scrape(platform, cutoff_str, sheet_id)
+        usernames = self.repo.get_creators_due_for_scrape(
+            platform, cutoff_str, sheet_id)
 
         # Format the usernames into full URLs for the Apify Actor
         if platform == 'instagram':
@@ -64,7 +75,7 @@ class SheetIngestor:
         elif platform == 'tiktok':
             urls = [f"https://www.tiktok.com/@{user}" for user in usernames]
         elif platform == 'youtube':
-            urls = [f"https://www.youtube.com/{user}" for user in usernames] 
+            urls = [f"https://www.youtube.com/{user}" for user in usernames]
 
         logger.info(
             f"Generated scrape list: {len(urls)} {platform} profiles are due for updates.")

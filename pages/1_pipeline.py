@@ -6,6 +6,10 @@ from core.sheet_ingestor import SheetIngestor
 from core.ingestors import DataIngestor
 from core.pipeline import PipelineOrchestrator
 import plotly.express as px
+from core.apify_adapter import ApifyAdapter
+from core.automation import AutomationOrchestrator
+from core.ingestors import DataIngestor
+from config.mappings import get_available_platforms
 
 # Grab the database and config from the global router
 repo = st.session_state.repo
@@ -52,8 +56,8 @@ with tab1:
 
     # --- ADD NEW SHEET UI ---
     with st.expander("➕ Add a New Client/Niche Sheet"):
-        new_sheet_name = st.text_input("Sheet Name (e.g., Tech Founders)")
-        new_sheet_url = st.text_input("Published CSV URL")
+        new_sheet_name = st.text_input("Sheet Name (e.g., Tech Founders)").strip()
+        new_sheet_url = st.text_input("Published CSV URL").strip()
         if st.button("Save Sheet"):
             if new_sheet_name and new_sheet_url:
                 if repo.add_sheet(new_sheet_name, new_sheet_url):
@@ -102,6 +106,35 @@ with tab1:
     if st.session_state.get('scrape_list'):
         st.write("### Paste these into Apify:")
         st.code(st.session_state['scrape_list'], language="text")
+
+    st.subheader("🤖 Automated Cloud Sync")
+    auto_platform_choice = st.selectbox("Platform to Sync", get_available_platforms(), key="auto_sync_platform")
+
+    if st.button("Run Full Automated Cloud Sync", type="primary"):
+        if st.session_state.get('active_sheet_id') is None:
+            st.error("Please select a client sheet in the sidebar first.")
+        else:
+            with st.status("Running automated sync pipeline in the cloud...", expanded=True) as status:
+                # Initialize the decoupled components
+                apify_scraper = ApifyAdapter(config.apify_api_token)
+                unified_ingestor = DataIngestor(config, repo)
+                orchestrator = AutomationOrchestrator(repo, apify_scraper, unified_ingestor)
+                
+                # Execute!
+                result = orchestrator.run_auto_sync(
+                    platform_name=auto_platform_choice, 
+                    sheet_id=st.session_state['active_sheet_id']
+                )
+                
+                if result["status"] == "success":
+                    status.update(label="✅ Cloud Sync Complete!", state="complete", expanded=False)
+                    st.write(result["message"])
+                    if result.get("new_videos") is not None:
+                        st.metric("New Videos Tracked", result["new_videos"])
+                        st.metric("New Daily Metrics", result["new_metrics"])
+                else:
+                    status.update(label="❌ Sync Failed", state="error", expanded=False)
+                    st.error(result["message"])
 
 
 # TAB 2: INGEST APIFY DATA
