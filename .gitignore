@@ -8,6 +8,7 @@ env/
 .env/
 env.bak/
 venv.bak/
+.env
 
 # Compiled object files / Caches
 __pycache__/
