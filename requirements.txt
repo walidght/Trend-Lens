@@ -3,3 +3,4 @@ openai-whisper
 requests
 streamlit
 plotly
+apify-client
