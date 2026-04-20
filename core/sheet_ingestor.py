@@ -1,7 +1,7 @@
 import io
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 import requests
 import pandas as pd
@@ -24,40 +24,36 @@ class SheetIngestor:
     # PUBLIC WORKFLOW METHODS
     # ==========================================
 
-    def sync_creators_to_db(self, sheet_id: int, sheet_url: str) -> int:
-        """Main pipeline: Fetches CSV, cleans data, inserts creators, and links to the sheet."""
+    def sync_creators_to_db(self, sheet_id: int, sheet_url: str) -> List[Tuple[str, str]]:
+        """Main pipeline: Fetches CSV, cleans data, inserts creators, and links to the sheet.
+
+        Returns the list of (username, platform) pairs that were newly inserted, so
+        callers can trigger a history backfill for those profiles.
+        """
         try:
-            # 1. Fetch and Parse
             df = self._fetch_csv_from_url(sheet_url)
-            
-            # 2. Validate and Clean
+
             df = self._clean_and_validate_dataframe(df)
             if df.empty:
-                return 0
+                return []
 
-            # 3. Insert into Database
             creators_data = list(zip(df['username'], df['platform']))
-            
-            # TODO: To handle the "scrape immediately" feature later, we will need to update 
-            # bulk_insert_creators to return a list of the *new* usernames, rather than just the count.
-            # so that we can scrape 30 days of content (for newly added profiles) to calculate the mean and std for the profile
-            added_count = self.repo.bulk_insert_creators(creators_data)
+            new_creators = self.repo.bulk_insert_creators(creators_data)
 
-            # 4. Link to the specific Sheet
             self._link_creators_by_platform(sheet_id, df)
 
-            logger.info(f"Synced {len(df)} creators from Sheet. {added_count} new profiles added to DB.")
-            return added_count
+            logger.info(f"Synced {len(df)} creators from Sheet. {len(new_creators)} new profiles added to DB.")
+            return new_creators
 
         except requests.RequestException as e:
             logger.error(f"Network error while fetching Google Sheet: {e}")
-            return 0
+            return []
         except ValueError as e:
             logger.error(f"Data validation error: {e}")
-            return 0
+            return []
         except Exception as e:
             logger.error(f"Unexpected error syncing Google Sheet: {e}")
-            return 0
+            return []
 
     def generate_scrape_list(self, platform: str = 'instagram', sheet_id: int = None) -> List[str]:
         """Finds creators who haven't been scraped recently and formats them for Apify."""

@@ -115,14 +115,16 @@ with col_b:
 
 if sync_clicked:
     with st.spinner("Syncing creators from Google Sheet..."):
-        ingestor = SheetIngestor(config, repo)
-        added = ingestor.sync_creators_to_db(active_sheet_id, active_sheet_url)
-    st.success(f"Sync complete — {added} new profile(s) added.")
+        sheet_ingestor = SheetIngestor(config, repo)
+        new_creators = sheet_ingestor.sync_creators_to_db(active_sheet_id, active_sheet_url)
+    st.success(f"Sync complete — {len(new_creators)} new profile(s) added.")
+    if new_creators:
+        st.session_state['pending_backfill'] = new_creators
 
 if links_clicked:
     with st.spinner("Computing profiles due for a scrape..."):
-        ingestor = SheetIngestor(config, repo)
-        urls = ingestor.generate_scrape_list(platform=platform_for_links, sheet_id=active_sheet_id)
+        sheet_ingestor = SheetIngestor(config, repo)
+        urls = sheet_ingestor.generate_scrape_list(platform=platform_for_links, sheet_id=active_sheet_id)
         st.session_state['scrape_list'] = "\n".join(urls)
 
 if st.session_state.get('scrape_list'):
@@ -133,6 +135,64 @@ if st.session_state.get('scrape_list'):
         st.code(urls_text, language="text")
     else:
         st.info("All profiles are up to date.")
+
+# --- Backfill confirmation for newly-added creators ---
+pending = st.session_state.get('pending_backfill') or []
+if pending:
+    st.warning(
+        f"**{len(pending)} new creator(s)** need a history backfill "
+        f"({config.backfill_max_items} posts each) to seed their baseline metrics."
+    )
+    c1, c2 = st.columns(2)
+    with c1:
+        run_backfill_clicked = st.button("Run backfill now", type="primary", use_container_width=True, key="run_pending_backfill")
+    with c2:
+        skip_backfill_clicked = st.button("Skip for now", use_container_width=True, key="skip_pending_backfill")
+
+    if skip_backfill_clicked:
+        st.session_state['pending_backfill'] = []
+        st.info("Skipped. These profiles remain retryable (last_scraped_at is NULL).")
+
+    if run_backfill_clicked:
+        with st.status("Running backfill...", expanded=True) as status_box:
+            scraper = ApifyAdapter(config.apify_api_token)
+            data_ingestor = DataIngestor(config, repo)
+            orchestrator = AutomationOrchestrator(config, repo, scraper, data_ingestor)
+            result = orchestrator.run_backfill(pending)
+
+            if result["status"] == "success":
+                status_box.update(label="✅ Backfill complete", state="complete", expanded=False)
+            elif result["status"] == "partial":
+                status_box.update(label="⚠️ Backfill partial", state="complete", expanded=True)
+            else:
+                status_box.update(label="❌ Backfill failed", state="error", expanded=True)
+            st.write(result["message"])
+            m1, m2 = st.columns(2)
+            m1.metric("New videos", result.get("new_videos", 0))
+            m2.metric("New daily metrics", result.get("new_metrics", 0))
+
+        st.session_state['pending_backfill'] = []
+
+# --- Retry backfill for any creator with NULL last_scraped_at ---
+pending_in_db = repo.get_creators_never_scraped(sheet_id=active_sheet_id)
+if pending_in_db and not pending:
+    if st.button(f"Backfill {len(pending_in_db)} pending creator(s) in this sheet", use_container_width=True):
+        with st.status("Running backfill...", expanded=True) as status_box:
+            scraper = ApifyAdapter(config.apify_api_token)
+            data_ingestor = DataIngestor(config, repo)
+            orchestrator = AutomationOrchestrator(config, repo, scraper, data_ingestor)
+            result = orchestrator.run_backfill(pending_in_db)
+
+            if result["status"] == "success":
+                status_box.update(label="✅ Backfill complete", state="complete", expanded=False)
+            elif result["status"] == "partial":
+                status_box.update(label="⚠️ Backfill partial", state="complete", expanded=True)
+            else:
+                status_box.update(label="❌ Backfill failed", state="error", expanded=True)
+            st.write(result["message"])
+            m1, m2 = st.columns(2)
+            m1.metric("New videos", result.get("new_videos", 0))
+            m2.metric("New daily metrics", result.get("new_metrics", 0))
 
 st.divider()
 

@@ -189,18 +189,34 @@ class TrendLensRepository:
 
         return stats
 
-    def bulk_insert_creators(self, creators_list: List[tuple]) -> int:
-        """Inserts multiple creators into the DB and returns the number of new additions."""
+    def bulk_insert_creators(self, creators_list: List[tuple]) -> List[tuple]:
+        """Inserts multiple creators and returns the (username, platform) pairs that were newly inserted."""
         if not creators_list:
-            return 0
-            
+            return []
+
         values = [{"username": u, "platform": p} for u, p in creators_list]
-        stmt = sqlite_insert(Creator).values(values).on_conflict_do_nothing(index_elements=['username', 'platform'])
-        
+        stmt = (
+            sqlite_insert(Creator)
+            .values(values)
+            .on_conflict_do_nothing(index_elements=['username', 'platform'])
+            .returning(Creator.username, Creator.platform)
+        )
+
         with self.db.get_session() as session:
             result = session.execute(stmt)
             session.commit()
-            return result.rowcount
+            return [(row.username, row.platform) for row in result]
+
+    def get_creators_never_scraped(self, sheet_id: Optional[int] = None) -> List[tuple]:
+        """Returns (username, platform) pairs for creators that have never been scraped."""
+        stmt = select(Creator.username, Creator.platform).where(Creator.last_scraped_at.is_(None))
+
+        if sheet_id:
+            stmt = stmt.join(sheet_creators_table, Creator.id == sheet_creators_table.c.creator_id)\
+                       .where(sheet_creators_table.c.sheet_id == sheet_id)
+
+        with self.db.get_session() as session:
+            return [(row.username, row.platform) for row in session.execute(stmt)]
 
     # ==========================================
     # SHEET MANAGEMENT & WORKFLOW
