@@ -149,7 +149,7 @@ if st.button("Run full pipeline", type="primary", use_container_width=True):
     with st.status("Running automated pipeline...", expanded=True) as status:
         scraper = ApifyAdapter(config.apify_api_token)
         ingestor = DataIngestor(config, repo)
-        orchestrator = AutomationOrchestrator(repo, scraper, ingestor)
+        orchestrator = AutomationOrchestrator(config, repo, scraper, ingestor)
 
         result = orchestrator.run_auto_sync(
             platform_name=auto_platform,

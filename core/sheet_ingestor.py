@@ -7,6 +7,7 @@ import requests
 import pandas as pd
 
 from config.settings import AppConfig
+from config.mappings import build_profile_url
 from core.repository import TrendLensRepository
 
 logger = logging.getLogger(__name__)
@@ -14,13 +15,6 @@ logger = logging.getLogger(__name__)
 
 class SheetIngestor:
     """Handles fetching target profiles from Google Sheets and managing the scrape queue."""
-
-    # 1. Define URL templates cleanly at the class level
-    URL_TEMPLATES: Dict[str, str] = {
-        'instagram': "https://www.instagram.com/{}/",
-        'tiktok': "https://www.tiktok.com/@{}",
-        'youtube': "https://www.youtube.com/{}"
-    }
 
     def __init__(self, config: AppConfig, repo: TrendLensRepository):
         self.config = config
@@ -67,20 +61,16 @@ class SheetIngestor:
 
     def generate_scrape_list(self, platform: str = 'instagram', sheet_id: int = None) -> List[str]:
         """Finds creators who haven't been scraped recently and formats them for Apify."""
-        if platform not in self.URL_TEMPLATES:
-            logger.error(f"Unsupported platform for URL generation: {platform}")
-            return []
-
-        # 1. Calculate the cutoff threshold
         cutoff_date = datetime.now() - timedelta(days=self.config.scrape_interval_days)
         cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
 
-        # 2. Fetch due usernames
         usernames = self.repo.get_creators_due_for_scrape(platform, cutoff_str, sheet_id)
 
-        # 3. Format URLs using the class-level template
-        template = self.URL_TEMPLATES[platform]
-        urls = [template.format(user) for user in usernames]
+        try:
+            urls = [build_profile_url(platform, user) for user in usernames]
+        except ValueError as e:
+            logger.error(str(e))
+            return []
 
         logger.info(f"Generated scrape list: {len(urls)} {platform} profiles are due for updates.")
         return urls

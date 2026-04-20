@@ -55,3 +55,18 @@ PLATFORM_MAPPINGS = {
 def get_available_platforms() -> list[str]:
     """Returns a list of supported platforms for the UI dropdown."""
     return list(PLATFORM_MAPPINGS.keys())
+
+
+_PROFILE_URL_TEMPLATES: dict[str, str] = {
+    'instagram': "https://www.instagram.com/{}/",
+    'tiktok': "https://www.tiktok.com/@{}",
+    'youtube': "https://www.youtube.com/{}",
+}
+
+
+def build_profile_url(platform: str, username: str) -> str:
+    """Builds the canonical profile URL for a given platform."""
+    template = _PROFILE_URL_TEMPLATES.get(platform)
+    if template is None:
+        raise ValueError(f"Unsupported platform for URL generation: {platform}")
+    return template.format(username)
