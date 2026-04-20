@@ -6,3 +6,5 @@ plotly
 apify-client
 python-dotenv
 sqlalchemy
+pytest
+pytest-mock
