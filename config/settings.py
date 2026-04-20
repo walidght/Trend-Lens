@@ -23,6 +23,7 @@ class AppConfig:
         self.db_path: str = "data/trendlens.db"
         self.google_sheet_csv_url: str = "https://docs.google.com/spreadsheets/d/e/xyz/pub?gid=0&single=true&output=csv"
         self.scrape_interval_days: int = 7
+        self.candidate_days: int = 7
         self.backfill_max_items: int = 21
         self.apify_api_token: str = os.getenv("APIFY_API_TOKEN")
 

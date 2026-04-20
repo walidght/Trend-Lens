@@ -54,7 +54,9 @@ class TrendLensRepository:
             latest_metrics.c.likes.label("likesCount"),
             latest_metrics.c.comments.label("commentsCount"),
             VideoInsight.is_collab,
-            VideoInsight.hook_text
+            VideoInsight.hook_text,
+            VideoInsight.view_z_score,
+            VideoInsight.first_viral_at,
         ).select_from(Video)\
          .join(Creator, Video.creator_id == Creator.id)\
          .join(latest_metrics, Video.video_id == latest_metrics.c.video_id)\
@@ -109,12 +111,25 @@ class TrendLensRepository:
     # DATA INGESTION & UPDATES
     # ==========================================
 
-    def save_extracted_hook(self, video_id: str, hook_text: str, z_score: float):
-        """Saves the AI-extracted hook back to the database."""
+    def save_extracted_hook(self, video_id: str, hook_text: str):
+        """Saves the AI-extracted hook text. Z-score is managed separately by update_z_score."""
         stmt = update(VideoInsight).where(VideoInsight.video_id == video_id).values(
             hook_text=hook_text,
-            view_z_score=z_score,
             updated_at=func.current_timestamp()
+        )
+        with self.db.get_session() as session:
+            session.execute(stmt)
+            session.commit()
+
+    def update_z_score(self, video_id: str, z_score: float):
+        """Updates the z-score for a viral video.
+
+        Sets first_viral_at on first detection and never overwrites it afterward,
+        preserving when the video was originally flagged as viral.
+        """
+        stmt = update(VideoInsight).where(VideoInsight.video_id == video_id).values(
+            view_z_score=z_score,
+            first_viral_at=func.coalesce(VideoInsight.first_viral_at, func.current_timestamp()),
         )
         with self.db.get_session() as session:
             session.execute(stmt)

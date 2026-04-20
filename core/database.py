@@ -132,6 +132,7 @@ class VideoInsight(Base):
     hook_category: Mapped[Optional[str]] = mapped_column(String)
     view_z_score: Mapped[Optional[float]] = mapped_column(Float)
     is_collab: Mapped[Optional[bool]] = mapped_column(Boolean)
+    first_viral_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     updated_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, server_default=text("CURRENT_TIMESTAMP"))
 

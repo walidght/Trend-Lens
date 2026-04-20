@@ -7,81 +7,89 @@ logger = logging.getLogger(__name__)
 
 
 class TrendAnalyzer:
-    """A universal AI pipeline that detects mathematical outliers across any platform."""
+    """Detects viral outliers by comparing recent videos against a prior baseline window."""
 
     def __init__(self, config: AppConfig, repo: TrendLensRepository):
         self.config = config
         self.repo = repo
 
     def process_data(self, sheet_id: int = None) -> pd.DataFrame:
-        logger.info("Loading latest video metrics from SQLite database...")
+        """Main entry point.
 
+        Splits all videos into a baseline window (days candidate_days–baseline_days old)
+        and a candidate window (last candidate_days). Scores each candidate against its
+        creator's baseline, updates z-scores in the DB for confirmed outliers, and returns
+        the subset that still needs Whisper transcription.
+        """
+        logger.info("Loading latest video metrics from database...")
         df = self.repo.get_all_latest_metrics(sheet_id)
-
 
         if df.empty:
             logger.info("No videos found in database.")
             return df
 
-        # big TODO
-        # instead of fetching current time - 30, fetch current time - 30 - 7 so for each video in the last 7 days we have a full 30-day history to calculate the baseline from. This way we can calculate a baseline for each video
-        # now for each video in last 7 days we calculate z score 
-        # if z score more then 1.5 and z score more then the one stored in the db we update z score in db
-        # at this point we should have the subtitles in the db but if not we add them (we check for them regardless)
+        df['published_date'] = pd.to_datetime(df['published_date'], utc=True, errors='coerce')
+        df = df.dropna(subset=['published_date'])
 
-        # Convert the Apify string timestamp into a real Datetime object
-        # errors='coerce' turns bad data into NaT (Not a Time) so it doesn't crash
-        df['published_date'] = pd.to_datetime(
-            df['published_date'], utc=True, errors='coerce')
+        now = pd.Timestamp.utcnow()
+        candidate_cutoff = now - pd.Timedelta(days=self.config.candidate_days)
+        baseline_start = now - pd.Timedelta(days=self.config.baseline_days + self.config.candidate_days)
 
-        # Calculate the cutoff date (e.g., 30 days ago)
-        cutoff_date = pd.Timestamp.utcnow() - pd.Timedelta(days=self.config.baseline_days)
+        candidates = df[df['published_date'] >= candidate_cutoff].copy()
+        baseline_pool = df[
+            (df['published_date'] >= baseline_start) &
+            (df['published_date'] < candidate_cutoff)
+        ].copy()
 
-        # Filter the dataframe to only include recent videos
-        recent_df = df[df['published_date'] >= cutoff_date].copy()
+        if candidates.empty:
+            logger.info(f"No videos published in the last {self.config.candidate_days} days.")
+            return pd.DataFrame()
 
-        if recent_df.empty:
-            logger.info(
-                f"No videos found in the last {self.config.baseline_days} days.")
-            return recent_df
+        candidates = self._score_candidates(candidates, baseline_pool)
 
+        outliers = candidates[candidates['new_z_score'] >= self.config.z_score_threshold].copy()
+
+        if outliers.empty:
+            logger.info("No viral outliers found this run.")
+            return pd.DataFrame()
+
+        self._persist_z_scores(outliers)
+
+        pending_transcription = outliers[outliers['hook_text'].isnull()].copy()
         logger.info(
-            f"Calculating baseline using {len(recent_df)} videos from the last {self.config.baseline_days} days.")
-
-        recent_df = self._calculate_insights(recent_df)
-
-        outliers_df = self._filter_outliers(recent_df)
-
-        # Filter out the ones we ALREADY transcribed!
-        pending_outliers = outliers_df[outliers_df['hook_text'].isnull()].copy(
+            f"Found {len(outliers)} viral outliers; "
+            f"{len(pending_transcription)} still need transcription."
         )
+        return pending_transcription
 
-        logger.info(f"Found {len(outliers_df)} total recent outliers.")
-        logger.info(
-            f"{len(pending_outliers)} of those are NEW and need AI transcription.")
+    def _score_candidates(self, candidates: pd.DataFrame, baseline_pool: pd.DataFrame) -> pd.DataFrame:
+        """Adds new_z_score to each candidate using its creator's baseline stats.
 
-        return pending_outliers
-
-    def _calculate_insights(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculates Z-Scores based on the fetched SQLite data."""
-        # Ensure we don't have math errors on nulls
-        df['videoPlayCount'] = df['videoPlayCount'].fillna(0).astype(int)
-
-        # Calculate Z-Score, grouped by creator
-        df['view_z_score'] = df.groupby('ownerUsername')['videoPlayCount'].transform(
-            # We add a check for len(x) > 1 because standard deviation of 1 item is NaN
-            lambda x: (x - x.mean()) / x.std() if len(x) > 1 else 0
+        Creators with <2 baseline videos are skipped (std is undefined).
+        """
+        baseline_stats = (
+            baseline_pool.groupby('ownerUsername')['videoPlayCount']
+            .agg(baseline_mean='mean', baseline_std='std')
+            .dropna()
         )
+        # dropna removes creators whose std is NaN (single baseline video)
+        baseline_stats = baseline_stats[baseline_stats['baseline_std'] > 0]
 
-        # Fill any lingering NaNs with 0
-        df['view_z_score'] = df['view_z_score'].fillna(0)
+        candidates = candidates.merge(baseline_stats, on='ownerUsername', how='left')
 
-        return df
+        def _z(row):
+            if pd.isna(row.get('baseline_mean')) or pd.isna(row.get('baseline_std')):
+                return None
+            return (row['videoPlayCount'] - row['baseline_mean']) / row['baseline_std']
 
-    def _filter_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Filters out average videos and keeps only the viral ones."""
-        outliers = df[df['view_z_score'] >=
-                      self.config.z_score_threshold].copy()
-        logger.info(
-            f"Identified {len(outliers)} viral outliers ready for hook extraction.")
-        return outliers
+        candidates['new_z_score'] = candidates.apply(_z, axis=1)
+        candidates = candidates.dropna(subset=['new_z_score'])
+        return candidates
+
+    def _persist_z_scores(self, outliers: pd.DataFrame):
+        """Updates the DB for each outlier where the new z is higher than the stored one."""
+        for _, row in outliers.iterrows():
+            stored = row.get('view_z_score')
+            new_z = float(row['new_z_score'])
+            if pd.isna(stored) or new_z > float(stored):
+                self.repo.update_z_score(row['video_id'], new_z)

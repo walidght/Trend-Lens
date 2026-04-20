@@ -129,14 +129,47 @@ class TestGetCreatorsDueForScrape:
 
 
 class TestSaveExtractedHook:
-    def test_updates_hook_text_and_zscore(self, repo, make_record):
+    def test_updates_hook_text(self, repo, make_record):
         repo.bulk_ingest_apify_data([make_record(video_id="vid1")])
-        repo.save_extracted_hook("vid1", "This is the hook.", 2.5)
+        repo.save_extracted_hook("vid1", "This is the hook.")
 
         hooks = repo.get_latest_hooks_preview()
         assert len(hooks) == 1
         assert hooks.iloc[0]["hook_text"] == "This is the hook."
-        assert float(hooks.iloc[0]["view_z_score"]) == pytest.approx(2.5)
+
+
+class TestUpdateZScore:
+    def test_sets_zscore(self, repo, make_record):
+        repo.bulk_ingest_apify_data([make_record(video_id="vid1")])
+        repo.update_z_score("vid1", 2.5)
+
+        metrics = repo.get_all_latest_metrics()
+        assert float(metrics.iloc[0]["view_z_score"]) == pytest.approx(2.5)
+
+    def test_sets_first_viral_at_on_first_call(self, repo, make_record):
+        repo.bulk_ingest_apify_data([make_record(video_id="vid1")])
+        repo.update_z_score("vid1", 2.5)
+
+        metrics = repo.get_all_latest_metrics()
+        assert metrics.iloc[0]["first_viral_at"] is not None
+
+    def test_first_viral_at_not_overwritten_on_subsequent_call(self, repo, make_record):
+        repo.bulk_ingest_apify_data([make_record(video_id="vid1")])
+        repo.update_z_score("vid1", 2.5)
+        first = repo.get_all_latest_metrics().iloc[0]["first_viral_at"]
+
+        repo.update_z_score("vid1", 3.0)
+        second = repo.get_all_latest_metrics().iloc[0]["first_viral_at"]
+
+        assert first == second
+
+    def test_z_score_can_be_updated_higher(self, repo, make_record):
+        repo.bulk_ingest_apify_data([make_record(video_id="vid1")])
+        repo.update_z_score("vid1", 2.0)
+        repo.update_z_score("vid1", 4.0)
+
+        metrics = repo.get_all_latest_metrics()
+        assert float(metrics.iloc[0]["view_z_score"]) == pytest.approx(4.0)
 
 
 class TestLinkCreatorsToSheet:

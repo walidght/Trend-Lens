@@ -54,8 +54,7 @@ class PipelineOrchestrator:
 
                 logger.info("Hook extracted successfully.")
 
-                self.repo.save_extracted_hook(
-                    video_id, hook, float(row['view_z_score']))
+                self.repo.save_extracted_hook(video_id, hook)
                 processed_count += 1
 
                 # Cleanup
