@@ -1,6 +1,8 @@
+import csv
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import List, Tuple, Optional
 
 import pandas as pd
@@ -116,6 +118,7 @@ class AutomationOrchestrator:
         }
 
         raw_data = self.scraper.run_actor(run_input, target_identifier=actor_id)
+        self._save_raw_csv(raw_data, platform_name, usernames)
         if not raw_data:
             return {"status": "error", "message": "Scraper returned no data."}
 
@@ -128,6 +131,21 @@ class AutomationOrchestrator:
             "new_videos": stats["new_videos"],
             "new_metrics": stats["new_metrics"],
         }
+
+    def _save_raw_csv(self, raw_data: list, platform_name: str, usernames: List[str]) -> None:
+        if not raw_data:
+            return
+        log_dir = Path("data/apify_logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        slug = "_".join(usernames[:3])
+        filename = log_dir / f"{platform_name}_{slug}_{timestamp}.csv"
+        keys = list(raw_data[0].keys())
+        with open(filename, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(raw_data)
+        logger.info(f"Saved raw Apify response to {filename}")
 
     @staticmethod
     def _lookup_platform(platform_name: str) -> Optional[dict]:
