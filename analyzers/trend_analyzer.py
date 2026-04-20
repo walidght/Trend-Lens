@@ -23,6 +23,12 @@ class TrendAnalyzer:
             logger.info("No videos found in database.")
             return df
 
+        # big TODO
+        # instead of fetching current time - 30, fetch current time - 30 - 7 so for each video in the last 7 days we have a full 30-day history to calculate the baseline from. This way we can calculate a baseline for each video
+        # now for each video in last 7 days we calculate z score 
+        # if z score more then 1.5 and z score more then the one stored in the db we update z score in db
+        # at this point we should have the subtitles in the db but if not we add them (we check for them regardless)
+
         # Convert the Apify string timestamp into a real Datetime object
         # errors='coerce' turns bad data into NaT (Not a Time) so it doesn't crash
         df['published_date'] = pd.to_datetime(

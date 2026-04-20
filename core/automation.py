@@ -29,7 +29,7 @@ class AutomationOrchestrator:
         # Extract the base platform ('instagram' from 'Instagram (Apify)') for the DB query
         base_platform = platform_name.split()[0].lower()
 
-        # 2. Get profiles due for scraping (Currently 7-day rule, later Queue table)
+        # TODO: 7 days hardcoded!!!
         from datetime import datetime, timedelta
         cutoff_date = datetime.now() - timedelta(days=7)
         cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
@@ -45,9 +45,15 @@ class AutomationOrchestrator:
         urls = [f"https://www.instagram.com/{u}/" if base_platform ==
                 'instagram' else f"https://www.tiktok.com/@{u}" for u in usernames]
 
+        run_input = {
+            "directUrls": urls,
+            "resultsLimit": max_items,
+            "resultsType": "posts",
+        }
+
         # 3. Trigger the Scraper abstraction
-        raw_data = self.scraper.scrape_profiles(
-            urls, target_identifier=actor_id, max_items=max_items)
+        raw_data = self.scraper.run_actor(
+            run_input, target_identifier=actor_id)
 
         if not raw_data:
             return {"status": "error", "message": "Scraper returned no data."}

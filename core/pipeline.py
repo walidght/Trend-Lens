@@ -49,7 +49,7 @@ class PipelineOrchestrator:
 
             # Execute Download and Transcribe
             if self.downloader.download_audio(audio_url, audio_path):
-                hook = self.transcriber.extract_hook(
+                hook = self.transcriber.transcribe_and_extract_hook(
                     audio_path, self.config.hook_sentence_count)
 
                 logger.info("Hook extracted successfully.")

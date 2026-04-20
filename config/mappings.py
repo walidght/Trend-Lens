@@ -12,6 +12,7 @@ def calculate_ig_collab(df: pd.DataFrame) -> pd.Series:
 PLATFORM_MAPPINGS = {
     "Instagram (Apify)": {
         "actor_id": "apify/instagram-scraper",
+        "base_platform": "instagram",
         "columns": {
             'ownerUsername': 'username',
             'videoPlayCount': 'views',
@@ -26,6 +27,8 @@ PLATFORM_MAPPINGS = {
     },
 
     "TikTok (Apify)": {
+        "actor_id": "clockwork/tiktok-profile-scraper",
+        "base_platform": "tiktok",
         "columns": {
             'authorMeta/name': 'username',
             'playCount': 'views',

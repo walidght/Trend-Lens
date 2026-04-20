@@ -1,6 +1,10 @@
-import pandas as pd
 import logging
 from datetime import datetime
+from urllib.parse import urlparse
+from typing import Dict, Any
+
+import pandas as pd
+
 from config.settings import AppConfig
 from core.repository import TrendLensRepository
 from config.mappings import PLATFORM_MAPPINGS
@@ -11,71 +15,103 @@ logger = logging.getLogger(__name__)
 class DataIngestor:
     """Normalizes raw data from any source into a standard format for the database."""
 
+    # 1. Define schema configurations at the class level
+    STANDARD_NUMERIC_COLS = ['views', 'likes', 'comments']
+    STANDARD_STRING_COLS = ['username', 'url', 'audio_url', 'published_date']
+
     def __init__(self, config: AppConfig, repo: TrendLensRepository):
         self.config = config
         self.repo = repo
 
     def ingest_dataframe(self, df: pd.DataFrame, platform_name: str) -> dict:
-        """
-        Takes a raw dataframe and a dictionary mapping the raw columns to our standard columns.
-        Example platform_map for Instagram: {'videoPlayCount': 'views', 'likesCount': 'likes'}
-        """
+        """Main pipeline: Maps, cleans, and ingests a raw dataframe."""
         platform_data = PLATFORM_MAPPINGS.get(platform_name)
 
         if not platform_data:
             logger.error(
                 f"No column mapping found for platform: {platform_name}")
             return {"new_videos": 0, "new_metrics": 0}
-        
-        column_map = platform_data.get("columns", {})
-        custom_transforms = platform_data.get("custom_transforms", {})
 
-        # Apply custom transforms FIRST (while the raw column names still exist)
+        try:
+            # 2. Delegate distinct steps to private helper methods
+            df = self._apply_mappings(df, platform_data)
+            df = self._ensure_schema(df)
+
+            base_platform = platform_data.get("base_platform", "unknown")
+            records = self._format_and_clean_data(df, base_platform)
+
+            if not records:
+                logger.warning(
+                    f"No valid records found after processing {platform_name} data.")
+                return {"new_videos": 0, "new_metrics": 0}
+
+            return self.repo.bulk_ingest_apify_data(records)
+
+        except Exception as e:
+            logger.error(
+                f"Data ingestion pipeline failed for {platform_name}: {e}")
+            return {"new_videos": 0, "new_metrics": 0}
+
+    def _apply_mappings(self, df: pd.DataFrame, platform_data: dict) -> pd.DataFrame:
+        """Applies custom transforms and renames columns based on the registry."""
+        df = df.copy()  # Prevents SettingWithCopyWarning in Pandas
+
+        custom_transforms = platform_data.get("custom_transforms", {})
+        column_map = platform_data.get("columns", {})
+
         for new_col_name, transform_function in custom_transforms.items():
             df[new_col_name] = transform_function(df)
 
-        # Standardize the remaining 1-to-1 column names
-        df = df.rename(columns=column_map)
+        return df.rename(columns=column_map)
 
-        # Ensure all required standard columns exist (fallback to 0 or None)
-        standard_cols = ['username', 'url', 'views', 'likes',
-                         'comments', 'audio_url', 'published_date', 'is_collab']
-        for col in standard_cols:
+    def _ensure_schema(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Backfills missing columns to ensure database compliance."""
+        for col in self.STANDARD_NUMERIC_COLS:
             if col not in df.columns:
-                df[col] = 0 if col in ['views', 'likes', 'comments'] else None
+                df[col] = 0
 
-        # 3. Clean NaNs for SQLite
+        for col in self.STANDARD_STRING_COLS:
+            if col not in df.columns:
+                df[col] = None
+
+        if 'is_collab' not in df.columns:
+            df['is_collab'] = False
+
+        return df
+
+    def _format_and_clean_data(self, df: pd.DataFrame, base_platform: str) -> list[Dict[str, Any]]:
+        """Cleans data using Pandas vectorization instead of row-by-row iteration."""
+        # Drop rows missing crucial identifiers early
+        df = df.dropna(subset=['username', 'url'])
+
+        # Vectorized string cleaning
+        df['username'] = df['username'].astype(str).str.strip()
+        df['url'] = df['url'].astype(str).str.strip()
+
+        # Filter out empty strings
+        df = df[(df['username'] != '') & (df['url'] != '')]
+
+        if df.empty:
+            return []
+
+        # Vectorized robust URL parsing
+        df['video_id'] = df['url'].apply(
+            lambda x: urlparse(x).path.rstrip('/').split('/')[-1]
+        )
+
+        # Vectorized type casting and fallback filling
+        for col in self.STANDARD_NUMERIC_COLS:
+            # to_numeric converts weird strings to NaN, fillna(0) makes them 0, astype(int) finalizes it
+            df[col] = pd.to_numeric(
+                df[col], errors='coerce').fillna(0).astype(int)
+
+        df['is_collab'] = df['is_collab'].astype(bool)
+        df['scraped_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        df['platform'] = base_platform
+
+        # Clean NaNs to None for SQLite
         df = df.where(pd.notnull(df), None)
-        today_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        records = []
 
-        # 4. Build the standardized records list
-        for _, row in df.iterrows():
-            username = str(row.get('username', '')).strip(
-            ) if row.get('username') else ''
-            url = str(row.get('url', '')) if row.get('url') else ''
-
-            if not username or not url:
-                continue
-
-            # Extract a unique video ID from the URL (works for IG, TikTok, and YT)
-            video_id = url.rstrip('/').split('/')[-1]
-
-            records.append({
-                "username": username,
-                "video_id": video_id,
-                "url": url,
-                "audio_url": row.get('audio_url'),
-                "published_date": row.get('published_date'),
-                "views": int(row['views']) if row.get('views') is not None else 0,
-                "likes": int(row['likes']) if row.get('likes') is not None else 0,
-                "comments": int(row['comments']) if row.get('comments') is not None else 0,
-                "is_collab": bool(row.get('is_collab')),
-                "scraped_at": today_str
-            })
-
-        if not records:
-            return {"new_videos": 0, "new_metrics": 0}
-
-        # 5. Pass to the universal bulk ingestor!
-        return self.repo.bulk_ingest_apify_data(records)
+        # Return a list of dictionaries automatically mapped to the columns
+        return df.to_dict(orient='records')
