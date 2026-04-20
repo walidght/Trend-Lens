@@ -200,6 +200,122 @@ class TestLinkCreatorsToSheet:
         repo.link_creators_to_sheet(s1_id, [], "instagram")
 
 
+class TestGetViralHooksForReport:
+    def _set_insight(self, repo, video_id, first_viral_at=None, hook_text=None, z_score=None):
+        """Test helper: directly set VideoInsight fields for date-range coverage."""
+        from sqlalchemy import update
+        from core.database import VideoInsight
+        values = {}
+        if first_viral_at is not None:
+            values["first_viral_at"] = first_viral_at
+        if hook_text is not None:
+            values["hook_text"] = hook_text
+        if z_score is not None:
+            values["view_z_score"] = z_score
+        stmt = update(VideoInsight).where(VideoInsight.video_id == video_id).values(**values)
+        with repo.db.get_session() as session:
+            session.execute(stmt)
+            session.commit()
+
+    def _setup_sheet_with_hook(self, repo, make_record, sheet_name, username, video_id,
+                                first_viral_at, hook_text, z_score):
+        repo.add_sheet(sheet_name, f"u_{sheet_name}")
+        sheet_id = repo.get_all_sheets()[sheet_name]["id"]
+        repo.bulk_ingest_apify_data([make_record(username=username, video_id=video_id)])
+        repo.link_creators_to_sheet(sheet_id, [username], "instagram")
+        self._set_insight(repo, video_id, first_viral_at=first_viral_at,
+                          hook_text=hook_text, z_score=z_score)
+        return sheet_id
+
+    def test_returns_hook_within_date_range(self, repo, make_record):
+        sheet_id = self._setup_sheet_with_hook(
+            repo, make_record, "S1", "alice", "v1",
+            first_viral_at=datetime(2026, 4, 15, 12), hook_text="Hello world", z_score=2.5,
+        )
+        df = repo.get_viral_hooks_for_report(
+            sheet_id, datetime(2026, 4, 10), datetime(2026, 4, 20)
+        )
+        assert len(df) == 1
+        assert df.iloc[0]["username"] == "alice"
+        assert df.iloc[0]["hook_text"] == "Hello world"
+
+    def test_excludes_hook_before_start_date(self, repo, make_record):
+        sheet_id = self._setup_sheet_with_hook(
+            repo, make_record, "S1", "alice", "v1",
+            first_viral_at=datetime(2026, 4, 5, 12), hook_text="Old hook", z_score=2.5,
+        )
+        df = repo.get_viral_hooks_for_report(
+            sheet_id, datetime(2026, 4, 10), datetime(2026, 4, 20)
+        )
+        assert df.empty
+
+    def test_excludes_hook_after_end_date(self, repo, make_record):
+        sheet_id = self._setup_sheet_with_hook(
+            repo, make_record, "S1", "alice", "v1",
+            first_viral_at=datetime(2026, 4, 25, 12), hook_text="Future hook", z_score=2.5,
+        )
+        df = repo.get_viral_hooks_for_report(
+            sheet_id, datetime(2026, 4, 10), datetime(2026, 4, 20)
+        )
+        assert df.empty
+
+    def test_excludes_null_hook_text(self, repo, make_record):
+        sheet_id = self._setup_sheet_with_hook(
+            repo, make_record, "S1", "alice", "v1",
+            first_viral_at=datetime(2026, 4, 15, 12), hook_text=None, z_score=2.5,
+        )
+        df = repo.get_viral_hooks_for_report(
+            sheet_id, datetime(2026, 4, 10), datetime(2026, 4, 20)
+        )
+        assert df.empty
+
+    def test_filters_by_sheet_id(self, repo, make_record):
+        s1_id = self._setup_sheet_with_hook(
+            repo, make_record, "S1", "alice", "v1",
+            first_viral_at=datetime(2026, 4, 15, 12), hook_text="S1 hook", z_score=2.5,
+        )
+        # Second sheet + creator, same date range
+        repo.add_sheet("S2", "u_S2")
+        s2_id = repo.get_all_sheets()["S2"]["id"]
+        repo.bulk_ingest_apify_data([make_record(username="bob", video_id="v2")])
+        repo.link_creators_to_sheet(s2_id, ["bob"], "instagram")
+        self._set_insight(repo, "v2", first_viral_at=datetime(2026, 4, 15, 12),
+                          hook_text="S2 hook", z_score=3.0)
+
+        df = repo.get_viral_hooks_for_report(
+            s1_id, datetime(2026, 4, 10), datetime(2026, 4, 20)
+        )
+        assert len(df) == 1
+        assert df.iloc[0]["username"] == "alice"
+
+    def test_sorted_by_z_score_desc(self, repo, make_record):
+        repo.add_sheet("S1", "u1")
+        s1_id = repo.get_all_sheets()["S1"]["id"]
+        repo.bulk_ingest_apify_data([
+            make_record(username="alice", video_id="v1"),
+            make_record(username="bob", video_id="v2",
+                        url="https://www.instagram.com/p/v2/"),
+        ])
+        repo.link_creators_to_sheet(s1_id, ["alice", "bob"], "instagram")
+        self._set_insight(repo, "v1", first_viral_at=datetime(2026, 4, 15),
+                          hook_text="low", z_score=1.8)
+        self._set_insight(repo, "v2", first_viral_at=datetime(2026, 4, 15),
+                          hook_text="high", z_score=4.2)
+
+        df = repo.get_viral_hooks_for_report(
+            s1_id, datetime(2026, 4, 10), datetime(2026, 4, 20)
+        )
+        assert list(df["hook_text"]) == ["high", "low"]
+
+    def test_empty_result_when_no_matches(self, repo, make_record):
+        repo.add_sheet("S1", "u1")
+        s1_id = repo.get_all_sheets()["S1"]["id"]
+        df = repo.get_viral_hooks_for_report(
+            s1_id, datetime(2026, 4, 10), datetime(2026, 4, 20)
+        )
+        assert df.empty
+
+
 class TestGetDashboardData:
     def test_returns_data_scoped_to_sheet(self, repo, make_record):
         repo.add_sheet("S1", "u1")

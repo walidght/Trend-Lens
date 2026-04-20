@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 import pandas as pd
 from typing import List, Dict, Optional
 
@@ -92,6 +93,35 @@ class TrendLensRepository:
         if not df.empty:
             df['published_date'] = pd.to_datetime(df['published_date'], utc=True, errors='coerce')
         return df
+
+    def get_viral_hooks_for_report(self, sheet_id: int, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+        """Fetches viral hooks flagged within [start_date, end_date] for a given sheet, sorted by z-score desc."""
+        latest_metrics = self._get_latest_metrics_subquery()
+
+        stmt = select(
+            Creator.username,
+            Creator.platform,
+            VideoInsight.hook_text,
+            VideoInsight.view_z_score,
+            latest_metrics.c.views,
+            Video.url,
+            Video.published_date,
+            VideoInsight.first_viral_at,
+        ).select_from(VideoInsight)\
+         .join(Video, VideoInsight.video_id == Video.video_id)\
+         .join(Creator, Video.creator_id == Creator.id)\
+         .join(sheet_creators_table, Creator.id == sheet_creators_table.c.creator_id)\
+         .join(latest_metrics, Video.video_id == latest_metrics.c.video_id)\
+         .where(
+            (sheet_creators_table.c.sheet_id == sheet_id) &
+            (VideoInsight.hook_text.isnot(None)) &
+            (VideoInsight.first_viral_at >= start_date) &
+            (VideoInsight.first_viral_at <= end_date)
+         )\
+         .order_by(desc(VideoInsight.view_z_score))
+
+        with self.db.engine.connect() as conn:
+            return pd.read_sql(stmt, conn)
 
     def get_latest_hooks_preview(self, limit: int = 10) -> pd.DataFrame:
         """Fetches recently extracted hooks for the UI dashboard."""

@@ -1,3 +1,5 @@
+from datetime import date, datetime, time, timedelta
+
 import streamlit as st
 import pandas as pd
 
@@ -293,3 +295,41 @@ if st.button("Run AI insights", type="primary", use_container_width=True):
         st.dataframe(preview_df, use_container_width=True)
     else:
         st.info("No new outliers above the current threshold.")
+
+st.divider()
+
+
+# ------------------------------------------
+# 5. GENERATE CLIENT REPORT
+# ------------------------------------------
+st.subheader("5. Generate client report")
+st.write("Export viral hooks flagged within a date range for the active sheet.")
+
+today = date.today()
+col_start, col_end = st.columns(2)
+with col_start:
+    start_date = st.date_input("Start date", value=today - timedelta(days=7), key="report_start")
+with col_end:
+    end_date = st.date_input("End date", value=today, key="report_end")
+
+if st.button("Generate report", type="primary", use_container_width=True):
+    if start_date > end_date:
+        st.error("Start date must be on or before end date.")
+    else:
+        start_dt = datetime.combine(start_date, time.min)
+        end_dt = datetime.combine(end_date, time.max)
+        report_df = repo.get_viral_hooks_for_report(active_sheet_id, start_dt, end_dt)
+
+        if report_df.empty:
+            st.info("No viral hooks found in this date range.")
+        else:
+            st.success(f"Found {len(report_df)} viral hook(s).")
+            st.dataframe(report_df, use_container_width=True)
+            filename = f"viral_hooks_{active_sheet_name}_{start_date}_to_{end_date}.csv"
+            st.download_button(
+                label="Download CSV",
+                data=report_df.to_csv(index=False).encode("utf-8"),
+                file_name=filename,
+                mime="text/csv",
+                use_container_width=True,
+            )
