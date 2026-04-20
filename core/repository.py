@@ -140,6 +140,7 @@ class TrendLensRepository:
 
             # 2. Fetch Creator IDs to map to videos
             usernames = [u for u, _, _ in unique_creators]
+            platforms = [p for _, p, _ in unique_creators]
             stmt_fetch_ids = select(Creator.id, Creator.username).where(
                 Creator.username.in_(usernames), Creator.platform.in_(platforms)
             )
@@ -204,8 +205,9 @@ class TrendLensRepository:
 
         with self.db.get_session() as session:
             result = session.execute(stmt)
+            rows = [(row.username, row.platform) for row in result]
             session.commit()
-            return [(row.username, row.platform) for row in result]
+            return rows
 
     def get_creators_never_scraped(self, sheet_id: Optional[int] = None) -> List[tuple]:
         """Returns (username, platform) pairs for creators that have never been scraped."""

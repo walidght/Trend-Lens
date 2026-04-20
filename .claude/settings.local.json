@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"import ast, io; ast.parse\\(io.open\\('app.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(gh pr create --base main --head claude/exciting-joliot-575034 --title 'Collapse Streamlit UI into single-file control panel' --body ' *)",
+      "Bash(where gh.exe)",
+      "Read(//c/Program Files/**)",
+      "Bash(command -v gh)",
+      "Read(//c/Users/walid/AppData/Local/Programs/**)",
+      "Read(//c/Users/**)",
+      "Bash(python -c \"import ast, io; [ast.parse\\(io.open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['app.py','core/automation.py','core/sheet_ingestor.py','config/mappings.py']]; print\\('OK'\\)\")",
+      "Bash(python -c \"import ast, io; [ast.parse\\(io.open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['app.py','core/automation.py','core/sheet_ingestor.py','core/repository.py','config/mappings.py','config/settings.py']]; print\\('OK'\\)\")",
+      "Bash(python -m pytest tests/test_mappings.py -v)",
+      "Bash(where python *)",
+      "Bash(command -v conda)",
+      "Bash(conda info *)",
+      "Bash(/c/Users/walid/miniconda3/envs/trend-lens/python.exe -m pip install pytest pytest-mock)",
+      "Bash(/c/Users/walid/miniconda3/envs/trend-lens/python.exe -m pytest tests/test_mappings.py -v)",
+      "Bash(/c/Users/walid/miniconda3/envs/trend-lens/python.exe -m pytest tests/test_repository.py -v)",
+      "Bash(/c/Users/walid/miniconda3/envs/trend-lens/python.exe -m pytest tests/test_repository.py::TestBulkInsertCreators::test_returns_only_newly_inserted_pairs -v)"
+    ]
+  }
+}

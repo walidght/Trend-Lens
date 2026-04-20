@@ -106,11 +106,18 @@ class DataIngestor:
                 df[col], errors='coerce').fillna(0).astype(int)
 
         df['is_collab'] = df['is_collab'].astype(bool)
-        df['scraped_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # Datetime columns are typed as DateTime in the ORM, so hand over real
+        # datetime objects (not strings). pd.to_datetime handles Apify's ISO
+        # timestamps; errors='coerce' maps junk to NaT, which becomes None below.
+        df['scraped_at'] = datetime.now()
+        df['published_date'] = pd.to_datetime(
+            df['published_date'], utc=True, errors='coerce'
+        ).dt.tz_localize(None).astype(object)
 
         df['platform'] = base_platform
 
-        # Clean NaNs to None for SQLite
+        # Clean NaNs/NaTs to None for SQLite
         df = df.where(pd.notnull(df), None)
 
         # Return a list of dictionaries automatically mapped to the columns
