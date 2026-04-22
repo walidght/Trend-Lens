@@ -19,7 +19,7 @@ class AppConfig:
         # -1 means full transcription, otherwise it limits to the first N sentences
         self.hook_sentence_count: int = -1
         self.db_path: str = "data/trendlens.db"
-        self.scrape_interval_days: int = 7
+        self.scrape_interval_days: int = 1
         self.candidate_days: int = 7
         self.backfill_max_items: int = 21
         self.apify_api_token: str = os.getenv("APIFY_API_TOKEN")
