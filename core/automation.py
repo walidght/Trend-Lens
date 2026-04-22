@@ -35,14 +35,15 @@ class AutomationOrchestrator:
             return {"status": "error", "message": f"Invalid platform mapping: {platform_name}"}
 
         base_platform = platform_data["base_platform"]
-        cutoff_date = datetime.now() - timedelta(days=self.config.scrape_interval_days)
-        cutoff_str = cutoff_date.strftime('%Y-%m-%d %H:%M:%S')
+        scrape_cutoff = datetime.now() - timedelta(days=self.config.scrape_interval_days)
+        cutoff_str = scrape_cutoff.strftime('%Y-%m-%d %H:%M:%S')
 
         usernames = self.repo.get_creators_due_for_scrape(base_platform, cutoff_str, sheet_id)
         if not usernames:
             return {"status": "success", "message": "No profiles due for scraping.", "new_videos": 0, "new_metrics": 0}
 
-        return self._scrape_and_ingest(platform_name, base_platform, usernames, max_items)
+        content_cutoff = datetime.now() - timedelta(days=7)
+        return self._scrape_and_ingest(platform_name, base_platform, usernames, max_items, cutoff_date=content_cutoff)
 
     def run_backfill(self, new_creators: List[Tuple[str, str]], max_items: Optional[int] = None) -> dict:
         """Scrapes history for a specific set of (username, base_platform) pairs.
@@ -72,7 +73,8 @@ class AutomationOrchestrator:
                 failures.append(f"{base_platform} (unmapped)")
                 continue
 
-            result = self._scrape_and_ingest(platform_name, base_platform, usernames, limit)
+            backfill_cutoff = datetime.now() - timedelta(days=self.config.baseline_days)
+            result = self._scrape_and_ingest(platform_name, base_platform, usernames, limit, cutoff_date=backfill_cutoff)
             if result["status"] == "success":
                 agg_videos += result.get("new_videos", 0)
                 agg_metrics += result.get("new_metrics", 0)
@@ -98,12 +100,16 @@ class AutomationOrchestrator:
     # INTERNAL HELPERS
     # ==========================================
 
-    def _scrape_and_ingest(self, platform_name: str, base_platform: str, usernames: List[str], max_items: int) -> dict:
+    def _scrape_and_ingest(self, platform_name: str, base_platform: str, usernames: List[str], max_items: int, cutoff_date: Optional[datetime] = None) -> dict:
         """Builds URLs, triggers the scraper, and ingests the results."""
         platform_data = PLATFORM_MAPPINGS.get(platform_name, {})
         actor_id = platform_data.get("actor_id")
         if not actor_id:
             return {"status": "error", "message": f"No actor_id configured for {platform_name}."}
+
+        builder = platform_data.get("run_input_builder")
+        if not builder:
+            return {"status": "error", "message": f"No run_input_builder configured for {platform_name}."}
 
         try:
             urls = [build_profile_url(base_platform, u) for u in usernames]
@@ -111,11 +117,7 @@ class AutomationOrchestrator:
             logger.error(str(e))
             return {"status": "error", "message": str(e)}
 
-        run_input = {
-            "directUrls": urls,
-            "resultsLimit": max_items,
-            "resultsType": "posts",
-        }
+        run_input = builder(urls, max_items, cutoff_date)
 
         raw_data = self.scraper.run_actor(run_input, target_identifier=actor_id)
         self._save_raw_csv(raw_data, platform_name, usernames)
