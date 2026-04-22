@@ -11,6 +11,7 @@ def config():
     cfg = AppConfig.__new__(AppConfig)
     cfg.scrape_interval_days = 7
     cfg.backfill_max_items = 21
+    cfg.baseline_days = 30
     return cfg
 
 
