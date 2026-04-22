@@ -12,8 +12,6 @@ logger = logging.getLogger(__name__)
 class AppConfig:
     def __init__(self):
         """Centralized configuration for easy injection via CLI or Web Interface."""
-        self.input_csv: str = "data/input/apify_data.csv"
-        self.output_csv: str = "data/output/viral_hooks.csv"
         self.z_score_threshold: float = 1.5
         self.baseline_days: int = 30
         self.temp_dir: str = "data/temp"
@@ -21,7 +19,6 @@ class AppConfig:
         # -1 means full transcription, otherwise it limits to the first N sentences
         self.hook_sentence_count: int = -1
         self.db_path: str = "data/trendlens.db"
-        self.google_sheet_csv_url: str = "https://docs.google.com/spreadsheets/d/e/xyz/pub?gid=0&single=true&output=csv"
         self.scrape_interval_days: int = 7
         self.candidate_days: int = 7
         self.backfill_max_items: int = 21
