@@ -82,17 +82,7 @@ with st.sidebar:
                     new_creators = sheet_ingestor.sync_creators_to_db(new_sheet_id, new_url)
                 st.success(f"Sheet saved — {len(new_creators)} new profile(s) added.")
                 if new_creators:
-                    with st.spinner(f"Backfilling {len(new_creators)} new creator(s)..."):
-                        scraper = ApifyAdapter(config.apify_api_token)
-                        data_ingestor = DataIngestor(config, repo)
-                        orchestrator = AutomationOrchestrator(config, repo, scraper, data_ingestor)
-                        result = orchestrator.run_backfill(new_creators)
-                    if result["status"] == "success":
-                        st.success(f"Backfill done — {result['new_videos']} videos, {result['new_metrics']} metrics.")
-                    elif result["status"] == "partial":
-                        st.warning(f"Backfill partial — {result['message']}")
-                    else:
-                        st.error(f"Backfill failed — {result['message']}")
+                    st.session_state['pending_backfill'] = new_creators
                 st.rerun()
 
 
