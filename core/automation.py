@@ -42,7 +42,7 @@ class AutomationOrchestrator:
         if not usernames:
             return {"status": "success", "message": "No profiles due for scraping.", "new_videos": 0, "new_metrics": 0}
 
-        content_cutoff = datetime.now() - timedelta(days=7)
+        content_cutoff = datetime.now() - timedelta(days=self.config.candidate_days)
         return self._scrape_and_ingest(platform_name, base_platform, usernames, max_items, cutoff_date=content_cutoff)
 
     def run_backfill(self, new_creators: List[Tuple[str, str]], max_items: Optional[int] = None) -> dict:
