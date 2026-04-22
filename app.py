@@ -73,11 +73,27 @@ with st.sidebar:
         if st.button("Save sheet", use_container_width=True):
             if not (new_name and new_url):
                 st.error("Both fields are required.")
-            elif repo.add_sheet(new_name, new_url):
-                st.success("Sheet saved.")
-                st.rerun()
-            else:
+            elif not repo.add_sheet(new_name, new_url):
                 st.error("A sheet with that name already exists.")
+            else:
+                new_sheet_id = repo.get_all_sheets()[new_name]["id"]
+                with st.spinner("Syncing creators from sheet..."):
+                    sheet_ingestor = SheetIngestor(config, repo)
+                    new_creators = sheet_ingestor.sync_creators_to_db(new_sheet_id, new_url)
+                st.success(f"Sheet saved — {len(new_creators)} new profile(s) added.")
+                if new_creators:
+                    with st.spinner(f"Backfilling {len(new_creators)} new creator(s)..."):
+                        scraper = ApifyAdapter(config.apify_api_token)
+                        data_ingestor = DataIngestor(config, repo)
+                        orchestrator = AutomationOrchestrator(config, repo, scraper, data_ingestor)
+                        result = orchestrator.run_backfill(new_creators)
+                    if result["status"] == "success":
+                        st.success(f"Backfill done — {result['new_videos']} videos, {result['new_metrics']} metrics.")
+                    elif result["status"] == "partial":
+                        st.warning(f"Backfill partial — {result['message']}")
+                    else:
+                        st.error(f"Backfill failed — {result['message']}")
+                st.rerun()
 
 
 # ==========================================
@@ -109,11 +125,13 @@ platform_for_links = st.selectbox(
     key="link_platform",
 )
 
-col_a, col_b = st.columns(2)
+col_a, col_b, col_c = st.columns(3)
 with col_a:
     sync_clicked = st.button("Sync from Google Sheet", use_container_width=True)
 with col_b:
-    links_clicked = st.button("Generate profile links", use_container_width=True, type="primary")
+    all_links_clicked = st.button("All profile links", use_container_width=True)
+with col_c:
+    due_links_clicked = st.button("Due for scrape", use_container_width=True, type="primary")
 
 if sync_clicked:
     with st.spinner("Syncing creators from Google Sheet..."):
@@ -123,20 +141,32 @@ if sync_clicked:
     if new_creators:
         st.session_state['pending_backfill'] = new_creators
 
-if links_clicked:
+if all_links_clicked:
+    from config.mappings import build_profile_url
+    usernames = repo.get_all_creators_for_sheet(active_sheet_id, platform_for_links)
+    if usernames:
+        urls = [build_profile_url(platform_for_links, u) for u in usernames]
+        st.session_state['profile_links'] = "\n".join(urls)
+        st.session_state['profile_links_label'] = f"all {len(urls)} profile(s)"
+    else:
+        st.session_state['profile_links'] = ""
+        st.session_state['profile_links_label'] = "none"
+
+if due_links_clicked:
     with st.spinner("Computing profiles due for a scrape..."):
         sheet_ingestor = SheetIngestor(config, repo)
         urls = sheet_ingestor.generate_scrape_list(platform=platform_for_links, sheet_id=active_sheet_id)
-        st.session_state['scrape_list'] = "\n".join(urls)
+    st.session_state['profile_links'] = "\n".join(urls)
+    st.session_state['profile_links_label'] = f"{len(urls)} profile(s) due for scrape"
 
-if st.session_state.get('scrape_list'):
-    urls_text = st.session_state['scrape_list']
-    count = len([u for u in urls_text.splitlines() if u.strip()])
-    if count:
-        st.write(f"**{count} profile(s) due** — paste into Apify:")
+if st.session_state.get('profile_links') is not None:
+    urls_text = st.session_state['profile_links']
+    label = st.session_state.get('profile_links_label', '')
+    if urls_text.strip():
+        st.write(f"**{label}:**")
         st.code(urls_text, language="text")
     else:
-        st.info("All profiles are up to date.")
+        st.info("No profiles found for the selected platform / filter.")
 
 # --- Backfill confirmation for newly-added creators ---
 pending = st.session_state.get('pending_backfill') or []
@@ -175,10 +205,10 @@ if pending:
 
         st.session_state['pending_backfill'] = []
 
-# --- Retry backfill for any creator with NULL last_scraped_at ---
-pending_in_db = repo.get_creators_never_scraped(sheet_id=active_sheet_id)
+# --- Retry backfill for creators not scraped within the candidate window ---
+pending_in_db = repo.get_creators_needing_backfill(sheet_id=active_sheet_id, candidate_days=config.candidate_days)
 if pending_in_db and not pending:
-    if st.button(f"Backfill {len(pending_in_db)} pending creator(s) in this sheet", use_container_width=True):
+    if st.button(f"Backfill {len(pending_in_db)} creator(s) not scraped in last {config.candidate_days} days", use_container_width=True):
         with st.status("Running backfill...", expanded=True) as status_box:
             scraper = ApifyAdapter(config.apify_api_token)
             data_ingestor = DataIngestor(config, repo)

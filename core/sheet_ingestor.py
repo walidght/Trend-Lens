@@ -37,7 +37,20 @@ class SheetIngestor:
             if df.empty:
                 return []
 
-            creators_data = list(zip(df['username'], df['platform']))
+            sheet_set = set(zip(df['username'], df['platform']))
+
+            # Remove links for creators no longer on the sheet (grouped by platform)
+            currently_linked = self.repo.get_linked_creators_for_sheet(sheet_id)
+            stale = [(u, p) for u, p in currently_linked if (u, p) not in sheet_set]
+            if stale:
+                by_platform: dict = {}
+                for u, p in stale:
+                    by_platform.setdefault(p, []).append(u)
+                for platform, usernames in by_platform.items():
+                    self.repo.remove_creator_sheet_links(sheet_id, usernames, platform)
+                logger.info(f"Removed {len(stale)} stale creator-sheet link(s).")
+
+            creators_data = list(sheet_set)
             new_creators = self.repo.bulk_insert_creators(creators_data)
 
             self._link_creators_by_platform(sheet_id, df)

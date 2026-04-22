@@ -3,7 +3,7 @@ from datetime import datetime
 import pandas as pd
 from typing import List, Dict, Optional
 
-from sqlalchemy import select, update, func, desc
+from sqlalchemy import select, update, func, desc, delete
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -254,6 +254,19 @@ class TrendLensRepository:
             session.commit()
             return rows
 
+    def get_creators_needing_backfill(self, sheet_id: Optional[int] = None, candidate_days: int = 7) -> List[tuple]:
+        """Returns (username, platform) pairs that need a backfill: never scraped OR not scraped within candidate_days."""
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=candidate_days)).strftime('%Y-%m-%d %H:%M:%S')
+        stmt = select(Creator.username, Creator.platform).where(
+            Creator.last_scraped_at.is_(None) | (Creator.last_scraped_at < cutoff)
+        )
+        if sheet_id:
+            stmt = stmt.join(sheet_creators_table, Creator.id == sheet_creators_table.c.creator_id)\
+                       .where(sheet_creators_table.c.sheet_id == sheet_id)
+        with self.db.get_session() as session:
+            return [(row.username, row.platform) for row in session.execute(stmt)]
+
     def get_creators_never_scraped(self, sheet_id: Optional[int] = None) -> List[tuple]:
         """Returns (username, platform) pairs for creators that have never been scraped."""
         stmt = select(Creator.username, Creator.platform).where(Creator.last_scraped_at.is_(None))
@@ -268,6 +281,14 @@ class TrendLensRepository:
     # ==========================================
     # SHEET MANAGEMENT & WORKFLOW
     # ==========================================
+
+    def get_all_creators_for_sheet(self, sheet_id: int, platform: str) -> List[str]:
+        """Returns ALL creator usernames linked to a sheet for the given platform, regardless of scrape date."""
+        stmt = select(Creator.username).where(Creator.platform == platform)\
+            .join(sheet_creators_table, Creator.id == sheet_creators_table.c.creator_id)\
+            .where(sheet_creators_table.c.sheet_id == sheet_id)
+        with self.db.get_session() as session:
+            return list(session.scalars(stmt).all())
 
     def get_creators_due_for_scrape(self, platform: str, cutoff_str: str, sheet_id: Optional[int] = None) -> List[str]:
         """Returns a list of usernames due for a scrape, optionally filtered by a specific sheet."""
@@ -300,6 +321,32 @@ class TrendLensRepository:
         stmt = select(Sheet.id, Sheet.name, Sheet.url)
         with self.db.get_session() as session:
             return {row.name: {"id": row.id, "url": row.url} for row in session.execute(stmt)}
+
+    def get_linked_creators_for_sheet(self, sheet_id: int) -> List[tuple]:
+        """Returns all (username, platform) pairs currently linked to a sheet."""
+        stmt = select(Creator.username, Creator.platform)\
+            .join(sheet_creators_table, Creator.id == sheet_creators_table.c.creator_id)\
+            .where(sheet_creators_table.c.sheet_id == sheet_id)
+        with self.db.get_session() as session:
+            return [(row.username, row.platform) for row in session.execute(stmt)]
+
+    def remove_creator_sheet_links(self, sheet_id: int, usernames: List[str], platform: str):
+        """Removes sheet-creator links for the given usernames+platform. Does not delete the creator rows."""
+        if not usernames:
+            return
+        with self.db.get_session() as session:
+            creator_ids = list(session.scalars(
+                select(Creator.id).where(Creator.username.in_(usernames), Creator.platform == platform)
+            ))
+            if not creator_ids:
+                return
+            session.execute(
+                delete(sheet_creators_table).where(
+                    (sheet_creators_table.c.sheet_id == sheet_id) &
+                    (sheet_creators_table.c.creator_id.in_(creator_ids))
+                )
+            )
+            session.commit()
 
     def link_creators_to_sheet(self, sheet_id: int, usernames: List[str], platform: str = 'instagram'):
         """Links a list of existing creators to a specific sheet."""
